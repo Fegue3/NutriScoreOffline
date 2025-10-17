@@ -1,6 +1,5 @@
 // lib/app/router/app_router.dart
 import 'package:go_router/go_router.dart';
-
 import 'package:drift/drift.dart' show Variable;
 import '../../app/di.dart' as di;
 
@@ -17,32 +16,28 @@ import '../../features/nutrition/add_food_screen.dart';
 import '../../features/nutrition/product_detail_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/settings/edit_user_screen.dart';
-
-
 import '../../features/nutrition/nutrition_stats_screen.dart';
-
 import '../../features/weight/weight_progress_screen.dart' as wp;
-
 import '../../features/scanner/scanner_screen.dart';
 import '../app_shell.dart';
+import '../../core/meal_type.dart';
 
 GoRouter buildAppRouter() {
   return GoRouter(
     initialLocation: '/',
 
-    // 👇 NOVO: guard global
+    // ==================== GUARDA GLOBAL ====================
     redirect: (context, state) async {
       final loc = state.matchedLocation;
       final public = {'/', '/login', '/signup'};
 
-      final user = await di.di.userRepo.currentUser(); // sessão local (SecureStore)
+      final user = await di.di.userRepo.currentUser(); // sessão local
       if (user == null) {
-        // bloqueia páginas do app sem sessão
         if (!public.contains(loc)) return '/';
         return null;
       }
 
-      // sessão existe → ver se já completou onboarding
+      // onboarding completo?
       final rows = await di.di.db
           .customSelect(
             'SELECT onboardingCompleted FROM User WHERE id=? LIMIT 1;',
@@ -50,35 +45,94 @@ GoRouter buildAppRouter() {
           )
           .get();
 
-      final done = rows.isNotEmpty && (rows.first.data['onboardingCompleted'] == 1);
+      final done =
+          rows.isNotEmpty && (rows.first.data['onboardingCompleted'] == 1);
 
-      // se não fez onboarding, força o fluxo
       if (!done && loc != '/onboarding') return '/onboarding';
-
-      // se já fez, evita páginas públicas
       if (done && public.contains(loc)) return '/dashboard';
 
-      return null; // segue normal
+      return null;
     },
 
+    // ==================== ROTAS ====================
     routes: [
       GoRoute(path: '/', builder: (_, __) => const AuthHubScreen()),
       GoRoute(path: '/login', builder: (_, __) => const SignInScreen()),
       GoRoute(path: '/signup', builder: (_, __) => const SignUpScreen()),
-      GoRoute(path: '/onboarding', builder: (_, __) => const OnboardingScreen()),
+      GoRoute(
+        path: '/onboarding',
+        builder: (_, __) => const OnboardingScreen(),
+      ),
 
-      GoRoute(path: '/add-food', builder: (_, __) => const AddFoodScreen()),
+      GoRoute(
+        path: '/add-food',
+        name: 'addFood',
+        builder: (_, state) {
+          final extra = state.extra;
+
+          MealType? meal;
+          DateTime? selectedDate;
+
+          if (extra is Map) {
+            // aceita várias chaves possíveis
+            final dynamic m =
+                extra['meal'] ??
+                extra['initialMeal'] ??
+                extra['initialMealDb'] ??
+                extra['initialMealTitle'] ??
+                extra['selectedMealDb'] ??
+                extra['selectedMealTitle'] ??
+                extra['mealTitle'];
+
+            if (m is MealType) {
+              meal = m;
+            } else if (m is String && m.trim().isNotEmpty) {
+              final s = m.trim();
+              // tenta pelos valores da DB primeiro…
+              switch (s.toUpperCase()) {
+                case 'BREAKFAST':
+                  meal = MealType.breakfast;
+                  break;
+                case 'LUNCH':
+                  meal = MealType.lunch;
+                  break;
+                case 'SNACK':
+                  meal = MealType.snack;
+                  break;
+                case 'DINNER':
+                  meal = MealType.dinner;
+                  break;
+                default:
+                  // …senão tenta o rótulo PT ("Almoço", "Jantar", etc.)
+                  meal = MealTypeX.fromPt(s);
+              }
+            }
+
+            final ymd =
+                (extra['dateYmd'] ?? extra['selectedDateYmd']) as String?;
+            if (ymd != null && ymd.isNotEmpty) {
+              selectedDate = DateTime.tryParse(ymd);
+            }
+          }
+
+          return AddFoodScreen(initialMeal: meal, selectedDate: selectedDate);
+        },
+      ),
+
       GoRoute(path: '/scan', builder: (_, __) => const ScannerScreen()),
+
       GoRoute(
         path: '/weight',
         name: 'weight',
         builder: (_, __) => const wp.WeightProgressScreen(),
       ),
+
       GoRoute(
         path: '/settings/user',
         pageBuilder: (_, __) => const NoTransitionPage(child: EditUserScreen()),
       ),
 
+      // ---------- PRODUCT DETAIL ----------
       GoRoute(
         name: 'productDetail',
         path: '/product-detail',
@@ -99,6 +153,44 @@ GoRouter buildAppRouter() {
             return null;
           }
 
+          // ---- MEAL (apanha enum direto, DB string ou label PT) ----
+          MealType? meal;
+          final dynMeal =
+              m['meal'] ??
+              m['initialMeal'] ??
+              m['selectedMealDb'] ??
+              m['initialMealDb'] ??
+              m['selectedMealTitle'] ??
+              m['initialMealTitle'];
+          if (dynMeal is MealType) {
+            meal = dynMeal;
+          } else if (dynMeal is String && dynMeal.trim().isNotEmpty) {
+            final s = dynMeal.trim();
+            switch (s.toUpperCase()) {
+              case 'BREAKFAST':
+                meal = MealType.breakfast;
+                break;
+              case 'LUNCH':
+                meal = MealType.lunch;
+                break;
+              case 'SNACK':
+                meal = MealType.snack;
+                break;
+              case 'DINNER':
+                meal = MealType.dinner;
+                break;
+              default:
+                meal = MealTypeX.fromPt(s); // "Almoço", "Jantar", etc.
+            }
+          }
+
+          // ---- DATE (YYYY-MM-DD) ----
+          DateTime? date;
+          final ymd = (m['dateYmd'] ?? m['selectedDateYmd']) as String?;
+          if (ymd != null && ymd.isNotEmpty) {
+            date = DateTime.tryParse(ymd);
+          }
+
           return ProductDetailScreen(
             barcode: m['barcode']?.toString(),
             name: m['name']?.toString(),
@@ -115,6 +207,11 @@ GoRouter buildAppRouter() {
             fiberGPerBase: asDouble(m['fiberGPerBase']),
             sodiumGPerBase: asDouble(m['sodiumGPerBase']),
             nutriScore: m['nutriScore']?.toString(),
+
+            // 👇 finalmente passamos para o ecrã
+            initialMeal: meal,
+            date: date,
+
             readOnly: m['readOnly'] == true,
             freezeFromEntry: m['freezeFromEntry'] == true,
           );
@@ -127,6 +224,7 @@ GoRouter buildAppRouter() {
         builder: (_, __) => const NutritionStatsScreen(),
       ),
 
+      // ---------- SHELL PRINCIPAL ----------
       ShellRoute(
         builder: (_, __, child) => AppShell(child: child),
         routes: [
@@ -136,11 +234,13 @@ GoRouter buildAppRouter() {
           ),
           GoRoute(
             path: '/diary',
-            pageBuilder: (_, __) => const NoTransitionPage(child: NutritionScreen()),
+            pageBuilder: (_, __) =>
+                const NoTransitionPage(child: NutritionScreen()),
           ),
           GoRoute(
             path: '/settings',
-            pageBuilder: (_, __) => const NoTransitionPage(child: SettingsScreen()),
+            pageBuilder: (_, __) =>
+                const NoTransitionPage(child: SettingsScreen()),
           ),
         ],
       ),

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:flutter/services.dart'; // HapticFeedback
+import '../../app/di.dart';
+import '../../domain/models.dart';
 
 class ScannerScreen extends StatefulWidget {
   final String? initialMealLabelPt; // ex: "Almoço"
@@ -48,37 +50,50 @@ class _ScannerScreenState extends State<ScannerScreen> {
     try {
       HapticFeedback.mediumImpact();
 
-      // Sem backend: segue para o detalhe com placeholders mínimos
+      // 1) buscar produto
+      final p = await di.productsRepo.getByBarcode(code);
+      if (p == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Produto não encontrado offline.')),
+        );
+        return;
+      }
+
+      // 2) registar no histórico (usa kcal/macros do modelo)
+      final user = await di.userRepo.currentUser();
+      if (user != null) {
+        await di.historyRepo.addIfNotDuplicate(
+          user.id,
+          HistorySnapshot(
+            barcode: p.barcode,
+            calories: p.energyKcal100g,
+            proteins: p.protein100g,
+            carbs: p.carb100g,
+            fat: p.fat100g,
+          ),
+        );
+      }
+
+      // 3) navegar para o detalhe com dados reais (base = 100 g)
       await context.pushNamed(
         'productDetail',
         extra: {
-          'barcode': code,
+          'barcode': p.barcode,
           'initialMeal': _mealLabelPt,
           'date': _date,
-          // placeholders de UI
-          'name': 'Produto',
-          'brand': null,
-          'nutriScore': '',
+          'name': p.name,
           'baseQuantityLabel': '100 g',
-          'kcalPerBase': 100,
-          'proteinGPerBase': 0.0,
-          'carbsGPerBase': 0.0,
-          'fatGPerBase': 0.0,
-          'sugarsGPerBase': 0.0,
-          'satFatGPerBase': 0.0,
-          'fiberGPerBase': 0.0,
-          'saltGPerBase': 0.0,
-          'sodiumGPerBase': 0.0,
+          'kcalPerBase': p.energyKcal100g,
+          'proteinGPerBase': p.protein100g,
+          'carbsGPerBase': p.carb100g,
+          'fatGPerBase': p.fat100g,
+          'sugarsGPerBase': p.sugars100g,
+          'fiberGPerBase': p.fiber100g,
+          'saltGPerBase': p.salt100g,
         },
       );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Falha ao abrir o detalhe.')),
-      );
-      _last = null;
     } finally {
-      // pequeno cooldown para evitar múltiplos disparos
       _busy = false;
       _cooldown?.cancel();
       _cooldown = Timer(const Duration(milliseconds: 400), () {

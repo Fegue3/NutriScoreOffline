@@ -3,11 +3,11 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// NutriScore — ProductDetailScreen (UI puro, sem backend)
-/// - Suporta modo leitura via `readOnly` (esconde controles e CTA)
-/// - Mostra donut de macros, info nutricional e favoritos (estado local)
-/// - CTA “Adicionar” apenas mostra um SnackBar (sem gravação real)
+import '../../app/di.dart';
+import '../../domain/models.dart';
+import '../../core/meal_type.dart'; // <- fonte única do enum + extension labelPt
 
+/// NutriScore — ProductDetailScreen (UI)
 class ProductDetailScreen extends StatefulWidget {
   const ProductDetailScreen({
     super.key,
@@ -60,7 +60,7 @@ class ProductDetailScreen extends StatefulWidget {
   final double? sodiumGPerBase;
 
   final String? nutriScore;
-  final MealType? initialMeal;
+  final MealType? initialMeal; // <- usa o enum do core
   final DateTime? date;
 
   final bool readOnly;
@@ -71,7 +71,7 @@ class ProductDetailScreen extends StatefulWidget {
 }
 
 class _ProductDetailScreenState extends State<ProductDetailScreen> {
-  late MealType _selectedMeal;
+  late MealType _selectedMeal; // <- enum do core
 
   final TextEditingController _portionCtrl = TextEditingController(text: "1");
   double _portions = 1;
@@ -100,9 +100,52 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   @override
   void initState() {
     super.initState();
+
+    // 1) refeição inicial e dados base do produto (fallbacks de UI)
     _selectedMeal = widget.initialMeal ?? MealType.breakfast;
     _hydrateWithFallback();
+
+    // 2) “carregamento” visual se tiver barcode
     _simulateLoadIfBarcode();
+
+    // 3) histórico (fire-and-forget)
+    () async {
+      final barcode = widget.barcode ?? '';
+      if (barcode.isEmpty) return;
+
+      final user = await di.userRepo.currentUser();
+      if (user == null) return;
+
+      await di.historyRepo.addIfNotDuplicate(
+        user.id,
+        HistorySnapshot(
+          barcode: barcode,
+          calories: _kcalBase,
+          proteins: _p,
+          carbs: _c,
+          fat: _f,
+        ),
+      );
+    }();
+     _syncFavoriteInitial();
+  }
+
+  Future<void> _syncFavoriteInitial() async {
+    final barcode = widget.barcode ?? '';
+    if (barcode.isEmpty) return;
+
+    final user = await di.userRepo.currentUser();
+    if (user == null) return;
+
+    // Tenta usar um método direto do repositório, se existir:
+    // final isFav = await di.favoritesRepo.isFavorited(user.id, barcode);
+
+    // Se não tiveres isFavorited(), dá para contornar assim:
+    final favs = await di.favoritesRepo.list(user.id); // ou getAll(user.id)
+    final isFav = favs.any((f) => f.barcode == barcode);
+
+    if (!mounted) return;
+    setState(() => _favorited = isFav);
   }
 
   String _effectiveBaseLabel(double portions) {
@@ -149,7 +192,6 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 
   Future<void> _simulateLoadIfBarcode() async {
-    // Simula “fetch” visual quando há barcode
     if ((widget.barcode ?? '').isEmpty) return;
     setState(() => _loading = true);
     await Future.delayed(const Duration(milliseconds: 350));
@@ -198,13 +240,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         bottom: false,
         child: CustomScrollView(
           slivers: [
-            // HERO topo com voltar + favorito
+            // HERO topo
             SliverToBoxAdapter(
               child: Container(
                 padding: EdgeInsets.only(top: topInset),
-                decoration: BoxDecoration(
-                  color: cs.primary,
-                ),
+                decoration: BoxDecoration(color: cs.primary),
                 child: Column(
                   children: [
                     Padding(
@@ -234,8 +274,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             tooltip: _favoritedBusy
                                 ? "A processar..."
                                 : (_favorited
-                                    ? "Remover dos favoritos"
-                                    : "Adicionar aos favoritos"),
+                                      ? "Remover dos favoritos"
+                                      : "Adicionar aos favoritos"),
                             icon: Icon(
                               _favorited
                                   ? Icons.favorite_rounded
@@ -245,27 +285,27 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             onPressed: _favoritedBusy
                                 ? null
                                 : () async {
-                                    final messenger =
-                                        ScaffoldMessenger.of(context);
-                                    final prev = _favorited;
-
-                                    setState(() {
-                                      _favoritedBusy = true;
-                                      _favorited = !prev;
-                                    });
-
-                                    // Simula um pequeno “processamento”
-                                    await Future.delayed(
-                                        const Duration(milliseconds: 250));
-
+                                    final user = await di.userRepo
+                                        .currentUser();
+                                    if (user == null ||
+                                        (widget.barcode ?? '').isEmpty) {
+                                      return;
+                                    }
+                                    setState(() => _favoritedBusy = true);
+                                    final nowFav = await di.favoritesRepo
+                                        .toggle(user.id, widget.barcode!);
                                     if (!mounted) return;
-                                    setState(() => _favoritedBusy = false);
-
-                                    messenger.showSnackBar(
+                                    setState(() {
+                                      _favorited = nowFav;
+                                      _favoritedBusy = false;
+                                    });
+                                    ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
-                                        content: Text(_favorited
-                                            ? 'Adicionado aos favoritos (UI)'
-                                            : 'Removido dos favoritos (UI)'),
+                                        content: Text(
+                                          nowFav
+                                              ? 'Adicionado aos favoritos'
+                                              : 'Removido dos favoritos',
+                                        ),
                                       ),
                                     );
                                   },
@@ -302,7 +342,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               ),
             ),
 
-            // Donut + chips + (controlos — escondidos em readOnly)
+            // Donut + chips + controlos
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               sliver: SliverToBoxAdapter(
@@ -331,7 +371,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         ),
                       const SizedBox(height: 12),
 
-                      // Chips macro (mostram sempre)
+                      // Chips macro
                       Row(
                         children: [
                           Expanded(
@@ -363,7 +403,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         ],
                       ),
 
-                      // Controles apenas quando não é readOnly
+                      // Controles (se não for readOnly)
                       if (!widget.readOnly) ...[
                         const SizedBox(height: 12),
                         _MealDropdown(
@@ -383,7 +423,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               ),
             ),
 
-            // Informação adicional — APENAS Informação nutricional
+            // Informação nutricional
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
               sliver: SliverToBoxAdapter(
@@ -398,7 +438,6 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-
                     _ExpandableInfo(
                       title: "Informação nutricional",
                       body: "",
@@ -433,14 +472,36 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 child: SizedBox(
                   height: 52,
                   child: FilledButton(
-                    onPressed: () {
+                    onPressed: () async {
+                      final user = await di.userRepo.currentUser();
+                      if (user == null || (widget.barcode ?? '').isEmpty) {
+                        return;
+                      }
+
+                      // porções × 100 g  → usamos unidade 'GRAM'
+                      final grams = (_portions <= 0 ? 1 : _portions) * 100.0;
+
+                      await di.mealsRepo.addOrUpdateMealItem(
+                        AddMealItemInput(
+                          userId: user.id,
+                          dayUtcCanon: (widget.date ?? DateTime.now().toUtc()),
+                          mealType: _selectedMeal.name.toUpperCase(),
+                          productBarcode: widget.barcode,
+                          customFoodId: null,
+                          unit: 'GRAM',
+                          quantity: grams,
+                        ),
+                      );
+
+                      if (!mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(
-                            'Adicionado ao ${_selectedMeal.labelPt} (UI) • $kcal kcal',
+                            'Adicionado ao ${_selectedMeal.labelPt}',
                           ),
                         ),
                       );
+                      Navigator.of(context).maybePop();
                     },
                     child: Text("Adicionar ao ${_selectedMeal.labelPt}"),
                   ),
@@ -500,25 +561,6 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   }
 }
 
-/* =================== MODELOS/ENUM LOCAIS =================== */
-
-enum MealType { breakfast, lunch, snack, dinner }
-
-extension MealTypeLabelPt on MealType {
-  String get labelPt {
-    switch (this) {
-      case MealType.breakfast:
-        return 'Pequeno-almoço';
-      case MealType.lunch:
-        return 'Almoço';
-      case MealType.snack:
-        return 'Lanche';
-      case MealType.dinner:
-        return 'Jantar';
-    }
-  }
-}
-
 /* =================== WIDGETS SECUNDÁRIOS =================== */
 
 class _InfoCard extends StatelessWidget {
@@ -539,15 +581,15 @@ class _InfoCard extends StatelessWidget {
     Color nutriColor(String g) {
       switch (g.toUpperCase()) {
         case "A":
-          return const Color(0xFF4CAF6D); // Fresh Green
+          return const Color(0xFF4CAF6D);
         case "B":
-          return const Color(0xFF66BB6A); // Leafy Green
+          return const Color(0xFF66BB6A);
         case "C":
-          return const Color(0xFFFFC107); // Golden Amber
+          return const Color(0xFFFFC107);
         case "D":
-          return const Color(0xFFFF8A4C); // Warm Tangerine
+          return const Color(0xFFFF8A4C);
         case "E":
-          return const Color(0xFFE53935); // Ripe Red
+          return const Color(0xFFE53935);
         default:
           return cs.primary;
       }
@@ -635,7 +677,7 @@ class _MealDropdown extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 child: Text(
-                  m.labelPt,
+                  m.labelPt, // <- getter da extension do core
                   style: tt.labelLarge?.copyWith(fontWeight: FontWeight.w700),
                 ),
               ),

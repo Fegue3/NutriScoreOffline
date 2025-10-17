@@ -1,11 +1,17 @@
 // lib/features/nutrition/add_food_screen.dart
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-/// NutriScore — AddFoodScreen (UI puro, sem lógica de backend / API)
+import '../../app/di.dart' as di;
+import '../../domain/models.dart';
+import '../../core/meal_type.dart'; // <- fonte única do enum + extensions (labelPt, dbValue)
+
+/// NutriScore — AddFoodScreen (ligado ao SQLite)
+
 class AddFoodScreen extends StatefulWidget {
-  final MealType? initialMeal; // "Pequeno-almoço", "Almoço", "Lanche", "Jantar"
+  final MealType? initialMeal; // Pequeno-almoço / Almoço / Lanche / Jantar
   final DateTime? selectedDate;
   const AddFoodScreen({super.key, this.initialMeal, this.selectedDate});
 
@@ -13,216 +19,120 @@ class AddFoodScreen extends StatefulWidget {
   State<AddFoodScreen> createState() => _AddFoodScreenState();
 }
 
-// --- Tabs do AddFood (UI) ---
+// --- Tabs do AddFood ---
 enum _AddTab { history, favorites, results }
-
-// --- Enum local (UI) ---
-enum MealType { breakfast, lunch, snack, dinner }
-
-extension on MealType {
-  String get labelPt {
-    switch (this) {
-      case MealType.breakfast:
-        return 'Pequeno-almoço';
-      case MealType.lunch:
-        return 'Almoço';
-      case MealType.snack:
-        return 'Lanche';
-      case MealType.dinner:
-        return 'Jantar';
-    }
-  }
-}
-
-// --- Modelos UI (placeholders locais) ---
-class UiProductSummary {
-  final String barcode;
-  final String name;
-  final String? brand;
-  final String? categories;
-  final String? nutriScore; // A..E
-  final int? energyKcal100g;
-  const UiProductSummary({
-    required this.barcode,
-    required this.name,
-    this.brand,
-    this.categories,
-    this.nutriScore,
-    this.energyKcal100g,
-  });
-}
-
-class UiProductHistoryItem {
-  final UiProductSummary? product;
-  final String? barcode;
-  final int? calories; // por 100g
-  final String? nutriScore;
-  final DateTime scannedAt;
-  const UiProductHistoryItem({
-    this.product,
-    this.barcode,
-    this.calories,
-    this.nutriScore,
-    required this.scannedAt,
-  });
-}
-
-class UiProductFavoriteItem {
-  final String barcode;
-  final String name;
-  final String? brand;
-  final String? nutriScore;
-  final int? energyKcal100g;
-  final DateTime? createdAt;
-  const UiProductFavoriteItem({
-    required this.barcode,
-    required this.name,
-    this.brand,
-    this.nutriScore,
-    this.energyKcal100g,
-    this.createdAt,
-  });
-}
 
 class _AddFoodScreenState extends State<AddFoodScreen> {
   final _searchCtrl = TextEditingController();
+  Timer? _debounce;
   late MealType _selectedMeal;
 
   // Alterna título Histórico/Pesquisa
   bool _showPesquisa = false;
 
-  // Estado "loading" puramente visual
+  // Loading states
   bool _loading = false;
-
-  // Dados UI (mock)
-  List<UiProductSummary> _results = const [];
-
   bool _loadingHistory = false;
-  List<UiProductHistoryItem> _history = const [];
+  bool _loadingFavs = false;
+
+  // Data (reais)
+  List<ProductModel> _results = const [];
+  List<HistoryEntry> _history = const [];
+  List<ProductModel> _favorites = const [];
 
   _AddTab _tab = _AddTab.history;
-  bool _loadingFavs = false;
-  List<UiProductFavoriteItem> _favorites = const [];
-
-  // Mock data base (UI)
-  final List<UiProductSummary> _mockBase = const [
-    UiProductSummary(
-      barcode: '5601234567890',
-      name: 'Iogurte Natural',
-      brand: 'Lacto PT',
-      categories: 'Laticínios',
-      nutriScore: 'A',
-      energyKcal100g: 62,
-    ),
-    UiProductSummary(
-      barcode: '5609876543210',
-      name: 'Pão Integral',
-      brand: 'Panis',
-      categories: 'Padaria',
-      nutriScore: 'B',
-      energyKcal100g: 240,
-    ),
-    UiProductSummary(
-      barcode: '5601112223334',
-      name: 'Bolacha de Chocolate',
-      brand: 'Doçuras',
-      categories: 'Snacks',
-      nutriScore: 'D',
-      energyKcal100g: 520,
-    ),
-    UiProductSummary(
-      barcode: '5604445556667',
-      name: 'Atum em Água',
-      brand: 'Mar Azul',
-      categories: 'Conservas',
-      nutriScore: 'A',
-      energyKcal100g: 116,
-    ),
-    UiProductSummary(
-      barcode: '5607778889990',
-      name: 'Refrigerante Cola',
-      brand: 'Fizz',
-      categories: 'Bebidas',
-      nutriScore: 'E',
-      energyKcal100g: 42,
-    ),
-  ];
 
   @override
   void initState() {
     super.initState();
     _selectedMeal = widget.initialMeal ?? MealType.breakfast;
-    _seedUiData();
 
-    // Sugestões rápidas enquanto escreve (filtra localmente)
-    _searchCtrl.addListener(() async {
+    // carregar histórico + favoritos iniciais
+    _loadHistoryAndFavorites();
+
+    // sugestões rápidas: procura real com debouncing
+    _searchCtrl.addListener(() {
       final q = _searchCtrl.text.trim();
       setState(() {
         _showPesquisa = q.isNotEmpty;
         _tab = q.isNotEmpty ? _AddTab.results : _tab;
       });
+      _debounce?.cancel();
       if (q.isEmpty) {
         setState(() => _results = const []);
         return;
       }
-      // Simula sugestões locais (top 8)
-      final items = _mockBase
-          .where((e) =>
-              e.name.toLowerCase().contains(q.toLowerCase()) ||
-              (e.brand ?? '').toLowerCase().contains(q.toLowerCase()) ||
-              e.barcode.contains(q))
-          .take(8)
-          .toList();
-      setState(() => _results = items);
+      _debounce = Timer(const Duration(milliseconds: 220), () async {
+        final list = await di.di.productsRepo.searchByName(q, limit: 8);
+        if (!mounted) return;
+        // só mostra se continuas a escrever o mesmo
+        if (_searchCtrl.text.trim() == q) {
+          setState(() => _results = list);
+        }
+      });
     });
   }
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
 
-  void _seedUiData() {
-    // Histórico (mock)
-    _history = [
-      UiProductHistoryItem(
-        product: _mockBase[0],
-        scannedAt: DateTime.now().subtract(const Duration(days: 0)),
-      ),
-      UiProductHistoryItem(
-        product: _mockBase[1],
-        scannedAt: DateTime.now().subtract(const Duration(days: 1)),
-      ),
-      UiProductHistoryItem(
-        product: _mockBase[3],
-        scannedAt: DateTime.now().subtract(const Duration(days: 2)),
-      ),
-      UiProductHistoryItem(
-        product: _mockBase[2],
-        scannedAt: DateTime.now().subtract(const Duration(days: 3)),
-      ),
-    ];
+  /* ----------------- Helpers ----------------- */
 
-    // Favoritos (mock)
-    _favorites = [
-      UiProductFavoriteItem(
-        barcode: _mockBase[0].barcode,
-        name: _mockBase[0].name,
-        brand: _mockBase[0].brand,
-        nutriScore: _mockBase[0].nutriScore,
-        energyKcal100g: _mockBase[0].energyKcal100g,
-        createdAt: DateTime.now().subtract(const Duration(days: 5)),
-      ),
-      UiProductFavoriteItem(
-        barcode: _mockBase[3].barcode,
-        name: _mockBase[3].name,
-        brand: _mockBase[3].brand,
-        nutriScore: _mockBase[3].nutriScore,
-        energyKcal100g: _mockBase[3].energyKcal100g,
-        createdAt: DateTime.now().subtract(const Duration(days: 9)),
-      ),
-    ];
+  String get _selectedDateYmd {
+    final d = widget.selectedDate ?? DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${d.year}-${two(d.month)}-${two(d.day)}';
+  }
+
+  /* ----------------- Loads ----------------- */
+
+  Future<void> _loadHistoryAndFavorites() async {
+    final user = await di.di.userRepo.currentUser();
+    if (user == null) return;
+
+    setState(() {
+      _loadingHistory = true;
+      _loadingFavs = true;
+    });
+
+    final h = await di.di.historyRepo.list(user.id, page: 1, pageSize: 20);
+    final f = await di.di.favoritesRepo.list(user.id, page: 1, pageSize: 20);
+
+    if (!mounted) return;
+    setState(() {
+      _history = h;
+      _favorites = f;
+      _loadingHistory = false;
+      _loadingFavs = false;
+    });
+  }
+
+  Future<void> _reloadHistory() async {
+    final user = await di.di.userRepo.currentUser();
+    if (user == null) return;
+    setState(() => _loadingHistory = true);
+    final h = await di.di.historyRepo.list(user.id, page: 1, pageSize: 20);
+    if (!mounted) return;
+    setState(() {
+      _history = h;
+      _loadingHistory = false;
+    });
+  }
+
+  Future<void> _reloadFavorites() async {
+    final user = await di.di.userRepo.currentUser();
+    if (user == null) return;
+    setState(() => _loadingFavs = true);
+    final f = await di.di.favoritesRepo.list(user.id, page: 1, pageSize: 20);
+    if (!mounted) return;
+    setState(() {
+      _favorites = f;
+      _loadingFavs = false;
+    });
   }
 
   Future<void> _onSearchSubmitted(String q) async {
@@ -232,8 +142,6 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
       _loading = query.isNotEmpty;
       _tab = _AddTab.results;
     });
-    await Future<void>.delayed(const Duration(milliseconds: 300)); // apenas UI
-    if (!mounted) return;
     if (query.isEmpty) {
       setState(() {
         _results = const [];
@@ -242,70 +150,53 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
       return;
     }
 
-    final resp = _mockBase
-        .where((e) =>
-            e.name.toLowerCase().contains(query.toLowerCase()) ||
-            (e.brand ?? '').toLowerCase().contains(query.toLowerCase()) ||
-            (e.categories ?? '').toLowerCase().contains(query.toLowerCase()) ||
-            e.barcode.contains(query))
-        .take(20)
-        .toList();
-
+    final resp = await di.di.productsRepo.searchByName(query, limit: 20);
+    if (!mounted) return;
     setState(() {
       _results = resp;
       _loading = false;
     });
   }
 
-  // ========= NAVIGAÇÃO =========
+  /* ----------------- NAVIGAÇÃO ----------------- */
 
   // 1) Scanner -> /scan; se devolver um barcode (String), preenche pesquisa e procura
   Future<void> _openScanner() async {
     final res = await context.push<String>('/scan');
+    if (!mounted)
+      return; // boa prática para o lint "use_build_context_synchronously"
     if (res is String && res.trim().isNotEmpty) {
       _searchCtrl.text = res.trim();
       await _onSearchSubmitted(_searchCtrl.text);
     }
   }
 
-  // 2) Abrir detalhe a partir de um summary
-  void _openDetailFromSummary(UiProductSummary p) {
+  // Abre detalhe preferindo dados do model quando existirem
+  void _openDetailByBarcode(String barcode, {ProductModel? p}) {
+    if (barcode.isEmpty) return;
     context.pushNamed(
       'productDetail',
       extra: {
-        'barcode': p.barcode,
-        'name': p.name,
-        'brand': p.brand,
-        'baseQuantityLabel': '100 g', // UI demo
-        'kcalPerBase': p.energyKcal100g,
-        'nutriScore': p.nutriScore,
-        'readOnly': true,
-      },
-    );
-  }
-
-  // 3) Abrir detalhe a partir de histórico
-  void _openDetailFromHistory(UiProductHistoryItem h) {
-    final p = h.product;
-    if (p == null) return;
-    _openDetailFromSummary(p);
-  }
-
-  // 4) Abrir detalhe a partir de favorito
-  void _openDetailFromFavorite(UiProductFavoriteItem f) {
-    context.pushNamed(
-      'productDetail',
-      extra: {
-        'barcode': f.barcode,
-        'name': f.name,
-        'brand': f.brand,
+        'barcode': barcode,
+        'name': p?.name,
         'baseQuantityLabel': '100 g',
-        'kcalPerBase': f.energyKcal100g,
-        'nutriScore': f.nutriScore,
-        'readOnly': true,
+        'kcalPerBase': p?.energyKcal100g,
+        'proteinGPerBase': p?.protein100g,
+        'carbsGPerBase': p?.carb100g,
+        'fatGPerBase': p?.fat100g,
+        'sugarsGPerBase': p?.sugars100g,
+        'fiberGPerBase': p?.fiber100g,
+        'saltGPerBase': p?.salt100g,
+        'readOnly': false,
+        'meal': _selectedMeal, // passa o enum
+        'dateYmd': _selectedDateYmd, // YYYY-MM-DD
+        'selectedMealDb': _selectedMeal.dbValue, // BREAKFAST/LUNCH/...
+        'selectedDateYmd': _selectedDateYmd,
       },
     );
   }
+
+  /* ----------------- UI ----------------- */
 
   @override
   Widget build(BuildContext context) {
@@ -379,9 +270,7 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
             // ===================== SCAN =====================
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: _ScanCardSurfaceGreen(
-                onTap: _openScanner, // <<< LIGA AO SCANNER
-              ),
+              child: _ScanCardSurfaceGreen(onTap: _openScanner),
             ),
 
             // ===================== HISTÓRICO / PESQUISA =====================
@@ -415,7 +304,8 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
                                   _HeaderTabChip(
                                     label: 'Histórico',
                                     selected:
-                                        _tab == _AddTab.history && !showingResults,
+                                        _tab == _AddTab.history &&
+                                        !showingResults,
                                     onTap: () {
                                       setState(() {
                                         _tab = _AddTab.history;
@@ -426,7 +316,8 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
                                   _HeaderTabChip(
                                     label: 'Favoritos',
                                     selected:
-                                        _tab == _AddTab.favorites && !showingResults,
+                                        _tab == _AddTab.favorites &&
+                                        !showingResults,
                                     onTap: () {
                                       setState(() {
                                         _tab = _AddTab.favorites;
@@ -439,17 +330,22 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
                             ),
                           ),
 
-                          // Refresh (UI apenas)
+                          // Refresh
                           if (!showingResults)
                             IconButton(
                               tooltip: _tab == _AddTab.favorites
                                   ? "Atualizar favoritos"
                                   : "Atualizar histórico",
                               icon: const Icon(Icons.refresh_rounded),
-                              onPressed: () {
+                              onPressed: () async {
+                                if (_tab == _AddTab.favorites) {
+                                  await _reloadFavorites();
+                                } else {
+                                  await _reloadHistory();
+                                }
+                                if (!mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text('Atualizado (UI demo).')),
+                                  const SnackBar(content: Text('Atualizado.')),
                                 );
                               },
                             ),
@@ -458,6 +354,7 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
                     );
                   }
 
+                  // RESULTADOS
                   if (showingResults) {
                     if (_loading) {
                       return const Padding(
@@ -479,8 +376,11 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
                     }
                     final it = _results[i - 1];
                     return _ResultTile(
-                      item: it,
-                      onTap: () => _openDetailFromSummary(it),
+                      name: it.name,
+                      barcode: it.barcode,
+                      brand: it.brand,
+                      kcal100: it.energyKcal100g,
+                      onTap: () => _openDetailByBarcode(it.barcode, p: it),
                     );
                   }
 
@@ -506,12 +406,14 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
                     }
                     final f = _favorites[i - 1];
                     return _FavoriteTile(
-                      item: f,
-                      onTap: () => _openDetailFromFavorite(f),
+                      name: f.name,
+                      barcode: f.barcode,
+                      kcal100: f.energyKcal100g,
+                      onTap: () => _openDetailByBarcode(f.barcode, p: f),
                     );
                   }
 
-                  // Histórico (UI)
+                  // HISTÓRICO
                   if (_loadingHistory && _history.isEmpty) {
                     return const Padding(
                       padding: EdgeInsets.symmetric(vertical: 32),
@@ -532,9 +434,26 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
                   }
 
                   final h = _history[i - 1];
-                  return _HistoryTileReal(
-                    item: h,
-                    onTap: () => _openDetailFromHistory(h),
+                  final scanned = _tryParseIso(h.scannedAtIso);
+
+                  // título principal
+                  final title = (h.name != null && h.name!.trim().isNotEmpty)
+                      ? h.name!.trim()
+                      : (h.barcode ?? 'Produto');
+
+                  // subtítulo: marca • código • data
+                  final subtitleParts = <String>[];
+                  if ((h.brand ?? '').trim().isNotEmpty)
+                    subtitleParts.add(h.brand!.trim());
+                  if ((h.barcode ?? '').trim().isNotEmpty)
+                    subtitleParts.add(h.barcode!.trim());
+                  if (scanned != null) subtitleParts.add(_fmtDate(scanned));
+
+                  return _HistoryTile(
+                    title: title,
+                    subtitle: subtitleParts.join(' • '),
+                    kcal100: h.calories,
+                    onTap: () => _openDetailByBarcode(h.barcode ?? ''),
                   );
                 },
               ),
@@ -543,6 +462,19 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
         ),
       ),
     );
+  }
+
+  DateTime? _tryParseIso(String s) {
+    try {
+      return DateTime.parse(s);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _fmtDate(DateTime d) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return "${two(d.day)}/${two(d.month)}/${d.year}";
   }
 }
 
@@ -586,7 +518,7 @@ class _MealComboChipCentered extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    m.labelPt,
+                    m.labelPt, // <- getter do core
                     style: tt.titleMedium?.copyWith(
                       fontSize: 20,
                       color: textColor,
@@ -607,7 +539,7 @@ class _MealComboChipCentered extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 6),
                   child: Text(
-                    m.labelPt,
+                    m.labelPt, // <- getter do core
                     style: tt.titleSmall?.copyWith(
                       fontWeight: FontWeight.w700,
                       color: textColor,
@@ -781,18 +713,31 @@ class _ScanCardSurfaceGreen extends StatelessWidget {
   }
 }
 
-/* ============================ HISTÓRICO (UI) ============================ */
-/*  SEM IMAGEM  */
-class _HistoryTileReal extends StatelessWidget {
-  final UiProductHistoryItem item;
+/* ============================ LIST ITEMS SIMPLIFICADOS ============================ */
+
+class _ResultTile extends StatelessWidget {
+  final String name;
+  final String barcode;
+  final String? brand; // <- NOVO
+  final int? kcal100;
   final VoidCallback? onTap;
-  const _HistoryTileReal({required this.item, this.onTap});
+  const _ResultTile({
+    required this.name,
+    required this.barcode,
+    this.brand, // <- NOVO
+    this.kcal100,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
-    final p = item.product;
+
+    final subtitle = [
+      if ((brand ?? '').trim().isNotEmpty) brand!.trim(),
+      barcode,
+    ].join(' • ');
 
     return Material(
       color: cs.surface,
@@ -805,7 +750,147 @@ class _HistoryTileReal extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // (sem thumbnail)
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: tt.titleMedium?.copyWith(
+                        color: cs.onSurface,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 6),
+                    if (kcal100 != null)
+                      _ChipMetric(label: "por 100g", value: "$kcal100 kcal"),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Material(
+                color: cs.primary,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: onTap,
+                  child: const Padding(
+                    padding: EdgeInsets.all(6),
+                    child: Icon(
+                      Icons.chevron_right_rounded,
+                      size: 20,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FavoriteTile extends StatelessWidget {
+  final String name;
+  final String barcode;
+  final int? kcal100;
+  final VoidCallback? onTap;
+  final String? brand; // opcional se já tiveres no model
+
+  const _FavoriteTile({
+    required this.name,
+    required this.barcode,
+    this.kcal100,
+    this.onTap,
+    this.brand,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _ResultTile(
+      name: name,
+      barcode: barcode,
+      brand: brand, // se ainda não tens, deixa null
+      kcal100: kcal100,
+      onTap: onTap,
+    );
+  }
+}
+
+class _HeaderTabChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _HeaderTabChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    return Material(
+      color: selected
+          ? cs.primary
+          : cs.surfaceContainerHighest.withValues(alpha: .35),
+      shape: const StadiumBorder(),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Text(
+            label,
+            style: tt.labelLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: selected ? cs.onPrimary : cs.onSurface,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HistoryTile extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final int? kcal100;
+  final VoidCallback? onTap;
+  const _HistoryTile({
+    required this.title,
+    required this.subtitle,
+    this.kcal100,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+
+    return Material(
+      color: cs.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -814,7 +899,7 @@ class _HistoryTileReal extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            (p?.name ?? 'Produto'),
+                            title,
                             style: tt.titleMedium?.copyWith(
                               color: cs.onSurface,
                               fontWeight: FontWeight.w800,
@@ -841,142 +926,13 @@ class _HistoryTileReal extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      [
-                        if ((p?.brand ?? '').isNotEmpty) p!.brand!,
-                        _fmtDate(item.scannedAt),
-                      ].join(' • '),
+                      subtitle,
                       style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                     ),
                     const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        if ((item.nutriScore ?? p?.nutriScore ?? '').isNotEmpty)
-                          _NutriTag(grade: (item.nutriScore ?? p?.nutriScore)!),
-                        const SizedBox(width: 8),
-                        if ((p?.energyKcal100g ?? item.calories) != null)
-                          _ChipMetric(
-                            label: "por 100g",
-                            value:
-                                "${(p?.energyKcal100g ?? item.calories)!} kcal",
-                          ),
-                      ],
-                    ),
+                    if (kcal100 != null)
+                      _ChipMetric(label: "por 100g", value: "$kcal100 kcal"),
                   ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _fmtDate(DateTime d) {
-    String two(int v) => v.toString().padLeft(2, '0');
-    return "${two(d.day)}/${two(d.month)}/${d.year}";
-  }
-}
-
-/* ============================ UTIL PARTILHADO ============================ */
-
-class _TopCurveClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    final p = Path();
-    p.lineTo(0, 0);
-    p.lineTo(0, size.height);
-    p.quadraticBezierTo(
-      size.width * 0.5,
-      -size.height,
-      size.width,
-      size.height,
-    );
-    p.lineTo(size.width, 0);
-    p.close();
-    return p;
-  }
-
-  @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
-}
-
-/* ============================ RESULT TILE (UI) ============================ */
-/*  SEM IMAGEM  */
-class _ResultTile extends StatelessWidget {
-  final UiProductSummary item;
-  final VoidCallback? onTap;
-  const _ResultTile({required this.item, this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final tt = Theme.of(context).textTheme;
-
-    return Material(
-      color: cs.surface,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // (sem thumbnail)
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.name,
-                      style: tt.titleMedium?.copyWith(
-                        color: cs.onSurface,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      [
-                        if ((item.brand ?? '').isNotEmpty) item.brand!,
-                        if ((item.categories ?? '').isNotEmpty)
-                          item.categories!,
-                      ].join(' • '),
-                      style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        if ((item.nutriScore ?? '').isNotEmpty)
-                          _NutriTag(grade: item.nutriScore!),
-                        const SizedBox(width: 8),
-                        if (item.energyKcal100g != null)
-                          _ChipMetric(
-                            label: "por 100g",
-                            value: "${item.energyKcal100g} kcal",
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Material(
-                color: cs.primary,
-                shape: const CircleBorder(),
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: onTap,
-                  child: const Padding(
-                    padding: EdgeInsets.all(6),
-                    child: Icon(
-                      Icons.chevron_right_rounded,
-                      size: 20,
-                      color: Colors.white,
-                    ),
-                  ),
                 ),
               ),
             ],
@@ -1023,170 +979,25 @@ class _ChipMetric extends StatelessWidget {
   }
 }
 
-class _NutriTag extends StatelessWidget {
-  final String grade;
-  const _NutriTag({required this.grade});
+/* ============================ UTIL PARTILHADO ============================ */
+
+class _TopCurveClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    final p = Path();
+    p.lineTo(0, 0);
+    p.lineTo(0, size.height);
+    p.quadraticBezierTo(
+      size.width * 0.5,
+      -size.height,
+      size.width,
+      size.height,
+    );
+    p.lineTo(size.width, 0);
+    p.close();
+    return p;
+  }
 
   @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    Color nutriColor(String g) {
-      switch (g.toUpperCase()) {
-        case "A":
-          return const Color(0xFF4CAF6D); // Fresh Green
-        case "B":
-          return const Color(0xFF66BB6A); // Leafy Green
-        case "C":
-          return const Color(0xFFFFC107); // Golden Amber
-        case "D":
-          return const Color(0xFFFF8A4C); // Warm Tangerine
-        case "E":
-          return const Color(0xFFE53935); // Ripe Red
-        default:
-          return cs.primary;
-      }
-    }
-
-    final c = nutriColor(grade);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: c.withValues(alpha: .12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: c.withValues(alpha: .35)),
-      ),
-      child: Text(
-        "NutriScore ${grade.toUpperCase()}",
-        style: Theme.of(
-          context,
-        ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w800, color: c),
-      ),
-    );
-  }
-}
-
-class _HeaderTabChip extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  const _HeaderTabChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final tt = Theme.of(context).textTheme;
-    return Material(
-      color: selected
-          ? cs.primary
-          : cs.surfaceContainerHighest.withValues(alpha: .35),
-      shape: const StadiumBorder(),
-      child: InkWell(
-        customBorder: const StadiumBorder(),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Text(
-            label,
-            style: tt.labelLarge?.copyWith(
-              fontWeight: FontWeight.w800,
-              color: selected ? cs.onPrimary : cs.onSurface,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _FavoriteTile extends StatelessWidget {
-  final UiProductFavoriteItem item;
-  final VoidCallback? onTap;
-  const _FavoriteTile({required this.item, this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final tt = Theme.of(context).textTheme;
-
-    return Material(
-      color: cs.surface,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            item.name,
-                            style: tt.titleMedium?.copyWith(
-                              color: cs.onSurface,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        Material(
-                          color: cs.primary,
-                          shape: const CircleBorder(),
-                          child: InkWell(
-                            customBorder: const CircleBorder(),
-                            onTap: onTap,
-                            child: const Padding(
-                              padding: EdgeInsets.all(6),
-                              child: Icon(
-                                Icons.add,
-                                size: 20,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      [
-                        if ((item.brand ?? '').isNotEmpty) item.brand!,
-                        if (item.createdAt != null)
-                          "${item.createdAt!.day.toString().padLeft(2, '0')}/"
-                              "${item.createdAt!.month.toString().padLeft(2, '0')}/"
-                              "${item.createdAt!.year}",
-                      ].join(' • '),
-                      style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        if ((item.nutriScore ?? '').isNotEmpty)
-                          _NutriTag(grade: item.nutriScore!),
-                        const SizedBox(width: 8),
-                        if (item.energyKcal100g != null)
-                          _ChipMetric(
-                            label: "por 100g",
-                            value: "${item.energyKcal100g} kcal",
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }

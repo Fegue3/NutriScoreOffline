@@ -36,17 +36,18 @@ class UserGoalsModel {
   });
 }
 
-
 class ProductModel {
   final String id;
   final String barcode;
   final String name;
+  final String? brand;
   final int? energyKcal100g;
   final double? protein100g, carb100g, fat100g, sugars100g, fiber100g, salt100g;
   const ProductModel({
     required this.id,
     required this.barcode,
     required this.name,
+    this.brand,
     this.energyKcal100g,
     this.protein100g,
     this.carb100g,
@@ -81,6 +82,8 @@ class MealItemModel {
   final String mealId;
   final String? productBarcode;
   final String? customFoodId;
+  final String? name; 
+  final String? brand; 
   final String unit; // GRAM/ML/PIECE
   final double quantity;
   final double? gramsTotal;
@@ -91,6 +94,8 @@ class MealItemModel {
     required this.mealId,
     this.productBarcode,
     this.customFoodId,
+    this.name,     
+    this.brand,    
     required this.unit,
     required this.quantity,
     this.gramsTotal,
@@ -144,5 +149,43 @@ class AddMealItemInput {
     this.customFoodId,
     required this.unit,
     required this.quantity,
+  });
+}
+
+/// ===== NOVOS: modelos p/ Histórico =====
+
+/// Entrada para listagem do histórico
+class HistoryEntry {
+  final String id;               // AUTOINCREMENT como string
+  final String? barcode;
+  final String scannedAtIso;     // TEXT ISO 8601
+  final int? calories;
+  final double? proteins, carbs, fat;
+   final String? name;            // nome do produto (se existir na tabela Product)
+  final String? brand;           // marca (se existir)
+  const HistoryEntry({
+    required this.id,
+    required this.barcode,
+    required this.scannedAtIso,
+    this.calories,
+    this.proteins,
+    this.carbs,
+    this.fat,
+    this.name,
+    this.brand, 
+  });
+}
+
+/// Payload mínimo para inserir no histórico
+class HistorySnapshot {
+  final String barcode;
+  final int? calories;
+  final double? proteins, carbs, fat;
+  const HistorySnapshot({
+    required this.barcode,
+    this.calories,
+    this.proteins,
+    this.carbs,
+    this.fat,
   });
 }

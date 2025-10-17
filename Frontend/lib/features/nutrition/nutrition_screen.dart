@@ -1,10 +1,13 @@
 // lib/features/nutrition/nutrition_screen.dart
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import '../../app/di.dart';
-import '../../domain/models.dart';
 
-/// NutriScore – NutritionScreen (UI puro, sem chamadas a backend)
+import '../../app/di.dart' as di;
+import '../../domain/models.dart';
+import '../../core/meal_type.dart'; // <- ÚNICA fonte do enum + extensions
+
+/// NutriScore – NutritionScreen
+
 class NutritionScreen extends StatefulWidget {
   const NutritionScreen({super.key});
   @override
@@ -45,9 +48,11 @@ class _NutritionScreenState extends State<NutritionScreen> {
         out.add(
           MealEntry(
             id: it.id,
-            name: (it.productBarcode ?? it.customFoodId ?? 'Alimento'),
+            name: (it.name != null && it.name!.trim().isNotEmpty)
+                ? it.name!.trim()
+                : (it.customFoodId ?? 'Alimento'),
             meal: typ,
-            brand: null,
+            brand: it.brand,
             barcode: it.productBarcode,
             calories: it.kcal,
             protein: it.protein,
@@ -64,18 +69,18 @@ class _NutritionScreenState extends State<NutritionScreen> {
   }
 
   Future<void> _loadDay() async {
-    setState(() {}); // dispara loading leve se quiseres (podes trocar por flag)
+    setState(() {}); // trigger leve de loading
     try {
-      final u = await di.userRepo.currentUser();
+      final u = await di.di.userRepo.currentUser();
       if (u == null) return;
 
       // Goal diário
-      final goals = await di.goalsRepo.getByUser(u.id);
+      final goals = await di.di.goalsRepo.getByUser(u.id);
       _dailyGoal = goals?.dailyCalories ?? 0;
 
       // Refeições do dia
       final dayCanon = DateTime.now().toUtc().add(Duration(days: _dayOffset));
-      final meals = await di.mealsRepo.getMealsForDay(u.id, dayCanon);
+      final meals = await di.di.mealsRepo.getMealsForDay(u.id, dayCanon);
       _entries = _toEntries(meals);
     } catch (_) {
       // opcional: snack/erro
@@ -145,21 +150,22 @@ class _NutritionScreenState extends State<NutritionScreen> {
   }
 
   // ======= NAV: Adicionar alimento (vai para /add-food) =======
-  void _openAddFor(String mealTitle) {
+  void _openAddFor(MealType meal) {
     context
         .push(
           '/add-food',
           extra: {
-            'mealTitle': mealTitle,
-            'dateYmd': _ymd, // o teu label “yyyy-mm-dd” para UI
+            'meal': meal, // <- envia o enum diretamente
+            'mealTitle': meal.labelPt, // opcional (UI)
+            'dateYmd': _ymd, // YYYY-MM-DD
           },
         )
-        .then((_) => _loadDay()); // <- refresca ao regressar
+        .then((_) => _loadDay());
   }
 
   void _removeEntry(MealEntry e) async {
     try {
-      await di.mealsRepo.removeMealItem(e.id);
+      await di.di.mealsRepo.removeMealItem(e.id);
     } catch (_) {
       // opcional: snack erro
     }
@@ -219,7 +225,7 @@ class _NutritionScreenState extends State<NutritionScreen> {
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _openAddFor("Pequeno-almoço"),
+        onPressed: () => _openAddFor(MealType.breakfast),
         backgroundColor: cs.primary,
         foregroundColor: cs.onPrimary,
         child: const Icon(Icons.add),
@@ -361,14 +367,12 @@ class _NutritionScreenState extends State<NutritionScreen> {
 
 /* ============================ MODELOS (UI) ============================ */
 
-enum MealType { breakfast, lunch, snack, dinner }
-
 class MealEntry {
   final String id;
   final String name;
   final String? brand;
   final String? barcode;
-  final MealType meal;
+  final MealType meal; // <- do core
   final num? calories;
   final num? protein;
   final num? carbs;
@@ -420,7 +424,7 @@ class _ArrowBtn extends StatelessWidget {
 class _DayContent extends StatelessWidget {
   final List<MealEntry> brk, lun, snk, din;
   final int kcalBrk, kcalLun, kcalSnk, kcalDin;
-  final void Function(String mealTitle) onTapAddFood;
+  final void Function(MealType meal) onTapAddFood;
   final void Function(MealEntry e) onRemove;
   final void Function(MealEntry e) onTapItem;
 
@@ -454,7 +458,7 @@ class _DayContent extends StatelessWidget {
             title: "Pequeno-almoço",
             calories: kcalBrk,
             items: brk,
-            onAddTap: () => onTapAddFood("Pequeno-almoço"),
+            onAddTap: () => onTapAddFood(MealType.breakfast),
             onRemove: onRemove,
             initiallyExpanded: brk.isNotEmpty,
             onTapItem: onTapItem,
@@ -464,7 +468,7 @@ class _DayContent extends StatelessWidget {
             title: "Almoço",
             calories: kcalLun,
             items: lun,
-            onAddTap: () => onTapAddFood("Almoço"),
+            onAddTap: () => onTapAddFood(MealType.lunch),
             onRemove: onRemove,
             initiallyExpanded: lun.isNotEmpty,
             onTapItem: onTapItem,
@@ -474,7 +478,7 @@ class _DayContent extends StatelessWidget {
             title: "Lanche",
             calories: kcalSnk,
             items: snk,
-            onAddTap: () => onTapAddFood("Lanche"),
+            onAddTap: () => onTapAddFood(MealType.snack),
             onRemove: onRemove,
             initiallyExpanded: snk.isNotEmpty,
             onTapItem: onTapItem,
@@ -484,7 +488,7 @@ class _DayContent extends StatelessWidget {
             title: "Jantar",
             calories: kcalDin,
             items: din,
-            onAddTap: () => onTapAddFood("Jantar"),
+            onAddTap: () => onTapAddFood(MealType.dinner),
             onRemove: onRemove,
             initiallyExpanded: din.isNotEmpty,
             onTapItem: onTapItem,

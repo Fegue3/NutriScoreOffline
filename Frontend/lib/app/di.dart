@@ -8,6 +8,8 @@ import '../data/local/meals_repo_sqlite.dart';
 import '../data/local/stats_repo_sqlite.dart';
 import '../data/local/weight_repo_sqlite.dart';
 import '../data/local/goals_repo_sqlite.dart';
+import '../data/local/favorites_repo_sqlite.dart';
+import '../data/local/history_repo_sqlite.dart';
 
 final di = _DI();
 
@@ -22,11 +24,19 @@ class _DI {
   late final WeightRepo weightRepo;
   late final GoalsRepo goalsRepo;
 
+  // NOVOS
+  late final FavoritesRepo favoritesRepo;
+  late final HistoryRepo historyRepo;
+
   Future<void> init() async {
     secure = SecureStore();
 
     db = NutriDatabase();
     await LocalBootstrap(db).ensureSchemaAndSeed();
+
+    // novos repos primeiro (para injeção)
+    historyRepo = HistoryRepoSqlite(db);
+    favoritesRepo = FavoritesRepoSqlite(db);
 
     userRepo = UserRepoSqlite(db, secure);
     productsRepo = ProductsRepoSqlite(db);

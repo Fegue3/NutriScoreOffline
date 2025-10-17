@@ -5,7 +5,7 @@ abstract class UserRepo {
   Future<String> signUp(String email, String password, {String? name});
   Future<UserModel?> currentUser();
   Future<void> signOut();
-  Future<void> deleteAccount(); // apaga o utilizador atual (e cascata)
+  Future<void> deleteAccount();
 }
 
 abstract class ProductsRepo {
@@ -34,4 +34,19 @@ abstract class WeightRepo {
 abstract class GoalsRepo {
   Future<void> upsert(UserGoalsModel model);
   Future<UserGoalsModel?> getByUser(String userId);
+}
+
+/// ===== NOVOS REPOS =====
+
+abstract class HistoryRepo {
+  Future<void> addIfNotDuplicate(String userId, HistorySnapshot s);
+  Future<List<HistoryEntry>> list(String userId, {int page = 1, int pageSize = 20, String? fromIso, String? toIso});
+}
+
+abstract class FavoritesRepo {
+  Future<bool> isFavorited(String userId, String barcode);
+  Future<void> add(String userId, String barcode);
+  Future<void> remove(String userId, String barcode);
+  Future<bool> toggle(String userId, String barcode);
+  Future<List<ProductModel>> list(String userId, {int page = 1, int pageSize = 20, String? q});
 }

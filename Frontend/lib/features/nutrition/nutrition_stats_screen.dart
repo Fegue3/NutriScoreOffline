@@ -1,13 +1,11 @@
 // lib/features/nutrition/nutrition_stats_screen.dart
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+
 import '../../app/di.dart';
+import '../../core/theme.dart' show AppColors;
 
-/// NutriScore – NutritionStatsScreen (UI puro, sem chamadas a backend)
-/// - Pie de calorias por refeição (CustomPaint)
-/// - Cartão de macros com progress bars
-/// - Dados mock só para demonstrar UI
-
+/// NutriScore – NutritionStatsScreen
 class NutritionStatsScreen extends StatefulWidget {
   const NutritionStatsScreen({super.key});
   @override
@@ -23,12 +21,12 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
   double carbTargetG = 0;
   double fatTargetG = 0;
 
-  // Limites “saúde pública” (mantém defaults caso não tenhas outros)
+  // Limites “saúde pública”
   double sugarsTargetG = 50;
   double fiberTargetG = 30;
   double saltTargetG = 5;
 
-  // ===== Dados do dia (vindos de stats/meals)
+  // ===== Dados do dia
   Map<MealSlot, double> _kcalByMeal = const {
     MealSlot.breakfast: 0,
     MealSlot.lunch: 0,
@@ -59,7 +57,8 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
     return MaterialLocalizations.of(ctx).formatMediumDate(d);
   }
 
-  double get _totalKcal => _kcalByMeal.values.fold<double>(0, (a, b) => a + b);
+  double get _totalKcal =>
+      _kcalByMeal.values.fold<double>(0, (a, b) => a + b);
 
   void _go(int delta) {
     if (delta == 0) return;
@@ -93,8 +92,9 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
         proteinTargetG = (kcalTarget * protPct / 100.0) / 4.0;
         fatTargetG = (kcalTarget * fatPct / 100.0) / 9.0;
       } else {
-        // se não houver dailyCalories ainda, zera os alvos de macros
-        carbTargetG = proteinTargetG = fatTargetG = 0;
+        carbTargetG = 0;
+        proteinTargetG = 0;
+        fatTargetG = 0;
       }
 
       // ---- stats do dia (StatsRepo)
@@ -175,10 +175,12 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
                     IconButton.filled(
                       onPressed: () => _go(-1),
                       icon: const Icon(Icons.chevron_left_rounded),
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: cs.primary,
-                        elevation: 0,
+                      style: ButtonStyle(
+                        backgroundColor:
+                            const MaterialStatePropertyAll<Color>(Colors.white),
+                        foregroundColor:
+                            MaterialStatePropertyAll<Color>(cs.primary),
+                        elevation: const MaterialStatePropertyAll<double>(0),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -208,10 +210,12 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
                     IconButton.filled(
                       onPressed: () => _go(1),
                       icon: const Icon(Icons.chevron_right_rounded),
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: cs.primary,
-                        elevation: 0,
+                      style: ButtonStyle(
+                        backgroundColor:
+                            const MaterialStatePropertyAll<Color>(Colors.white),
+                        foregroundColor:
+                            MaterialStatePropertyAll<Color>(cs.primary),
+                        elevation: const MaterialStatePropertyAll<double>(0),
                       ),
                     ),
                   ],
@@ -233,7 +237,6 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
                     goalKcal: kcalTarget.toDouble(),
                   ),
                   const SizedBox(height: 16),
-
                   _MacroSectionCard(
                     kcalUsed: _totalKcal.round(),
                     kcalTarget: kcalTarget,
@@ -300,7 +303,7 @@ class _CaloriesMealsPieCard extends StatelessWidget {
     final entries = MealSlot.values
         .map((s) => MapEntry(s, kcalByMeal[s] ?? 0))
         .where((e) => e.value > 0)
-        .toList();
+        .toList(growable: false);
 
     return Container(
       decoration: BoxDecoration(
@@ -333,11 +336,11 @@ class _CaloriesMealsPieCard extends StatelessWidget {
                       height: 160,
                       child: _MealsPie(
                         data: entries,
-                        palette: [
-                          cs.primary,
-                          cs.tertiary,
-                          cs.secondary,
-                          cs.error,
+                        palette: const [
+                          AppColors.freshGreen,
+                          AppColors.leafyGreen,
+                          AppColors.warmTangerine,
+                          AppColors.goldenAmber,
                         ],
                         background: cs.surfaceContainerHighest,
                       ),
@@ -353,13 +356,13 @@ class _CaloriesMealsPieCard extends StatelessWidget {
                       ...entries.asMap().entries.map((kv) {
                         final idx = kv.key;
                         final e = kv.value;
-                        final color = [
-                          cs.primary,
-                          cs.tertiary,
-                          cs.secondary,
-                          cs.error,
+                        final Color color = const [
+                          AppColors.freshGreen,
+                          AppColors.leafyGreen,
+                          AppColors.warmTangerine,
+                          AppColors.goldenAmber,
                         ][idx % 4];
-                        final pct = totalKcal <= 0
+                        final int pct = totalKcal <= 0
                             ? 0
                             : ((e.value / totalKcal) * 100).round();
                         return Padding(
@@ -404,7 +407,9 @@ class _CaloriesMealsPieCard extends StatelessWidget {
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          Expanded(child: Text('Total', style: tt.bodyMedium)),
+                          Expanded(
+                            child: Text('Total', style: tt.bodyMedium),
+                          ),
                           Text(
                             '${totalKcal.round()} kcal',
                             style: tt.titleSmall?.copyWith(
@@ -416,7 +421,9 @@ class _CaloriesMealsPieCard extends StatelessWidget {
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          Expanded(child: Text('Meta', style: tt.bodyMedium)),
+                          Expanded(
+                            child: Text('Meta', style: tt.bodyMedium),
+                          ),
                           Text(
                             '${goalKcal.round()} kcal',
                             style: tt.titleSmall?.copyWith(
@@ -451,11 +458,15 @@ class _MealsPie extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final sum = data.fold<double>(0, (a, b) => a + b.value);
+    final double sum = data.fold<double>(0, (a, b) => a + b.value);
     return CustomPaint(
       painter: _PiePainter(
-        values: data.map((e) => e.value).toList(),
-        colors: List.generate(data.length, (i) => palette[i % palette.length]),
+        values: data.map((e) => e.value).toList(growable: false),
+        colors: List<Color>.generate(
+          data.length,
+          (i) => palette[i % palette.length],
+          growable: false,
+        ),
         background: background,
         sum: sum,
       ),
@@ -468,6 +479,7 @@ class _PiePainter extends CustomPainter {
   final List<Color> colors;
   final double sum;
   final Color background;
+
   _PiePainter({
     required this.values,
     required this.colors,
@@ -481,36 +493,40 @@ class _PiePainter extends CustomPainter {
     final center = rect.center;
     final radius = math.min(size.width, size.height) / 2;
 
+    final railStroke = radius * 0.30;
+    final arcRadius = radius * 0.72;
+
     final bgPaint = Paint()
       ..color = background
       ..style = PaintingStyle.stroke
-      ..strokeWidth = radius * 0.30
+      ..strokeWidth = railStroke
       ..strokeCap = StrokeCap.butt;
 
     // trilho
     canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius * 0.72),
+      Rect.fromCircle(center: center, radius: arcRadius),
       -math.pi / 2,
       math.pi * 2,
       false,
       bgPaint,
     );
 
+    if (sum <= 0) return;
+
     double start = -math.pi / 2;
     for (int i = 0; i < values.length; i++) {
-      // ---- FIX 1: garantir double
-      final double sweep = sum <= 0
-          ? 0.0
-          : ((values[i] / sum) * (math.pi * 2)).toDouble();
+      final double v = values[i] <= 0 ? 0.0 : values[i];
+      final double sweep = (v / sum) * (math.pi * 2);
+      if (sweep <= 0) continue;
 
       final p = Paint()
         ..color = colors[i]
         ..style = PaintingStyle.stroke
-        ..strokeWidth = radius * 0.30
+        ..strokeWidth = railStroke
         ..strokeCap = StrokeCap.butt;
 
       canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius * 0.72),
+        Rect.fromCircle(center: center, radius: arcRadius),
         start,
         sweep,
         false,
@@ -529,7 +545,7 @@ class _PiePainter extends CustomPainter {
   }
 }
 
-/* ============================ CARD DE MACROS ============================ */
+/* ============================ CARD DE MACROS (1 por linha) ============================ */
 
 class _MacroSectionCard extends StatelessWidget {
   final int kcalUsed;
@@ -581,11 +597,16 @@ class _MacroSectionCard extends StatelessWidget {
       Color? color,
       String unit = 'g',
     }) {
-      final v = value.clamp(0, double.infinity);
-      final t = target <= 0 ? 1 : target;
+      final double v =
+          value.isFinite ? value.clamp(0, double.infinity) : 0.0;
+      final double t = (target.isFinite && target > 0) ? target : 1.0;
 
-      // ---- FIX 2: clamp devolve num; força double
-      final double pct = (v / t).clamp(0.0, 1.0) as double;
+      final double pct = v / t;
+      final double clampedPct = pct < 0
+          ? 0.0
+          : (pct > 1.0)
+              ? 1.0
+              : pct;
 
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -595,10 +616,11 @@ class _MacroSectionCard extends StatelessWidget {
           ClipRRect(
             borderRadius: BorderRadius.circular(999),
             child: LinearProgressIndicator(
-              value: pct,
+              value: clampedPct,
               minHeight: 10,
               backgroundColor: cs.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation<Color>(color ?? cs.primary),
+              valueColor:
+                  AlwaysStoppedAnimation<Color>(color ?? cs.primary),
             ),
           ),
           const SizedBox(height: 6),
@@ -606,12 +628,14 @@ class _MacroSectionCard extends StatelessWidget {
             children: [
               Text(
                 '${v.toStringAsFixed(0)} $unit',
-                style: tt.labelSmall?.copyWith(fontWeight: FontWeight.w800),
+                style:
+                    tt.labelSmall?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(width: 8),
               Text(
                 'alvo ${t.toStringAsFixed(0)} $unit',
-                style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant),
+                style:
+                    tt.labelSmall?.copyWith(color: cs.onSurfaceVariant),
               ),
             ],
           ),
@@ -634,89 +658,70 @@ class _MacroSectionCard extends StatelessWidget {
       ),
       padding: const EdgeInsets.all(16),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Cabeçalho calorias
-          Row(
+          // Cabeçalho calorias (sem overflow)
+          Text('Calorias', style: tt.titleMedium),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Expanded(child: Text('Calorias', style: tt.titleMedium)),
-              _chip('$kcalUsed kcal usados', cs.primary, Colors.white),
-              const SizedBox(width: 8),
-              _chip(
-                'meta $kcalTarget kcal',
-                cs.surfaceContainerHighest,
-                cs.onSurface,
-              ),
+              _chip('$kcalUsed kcal usados', AppColors.freshGreen, Colors.white),
+              _chip('meta $kcalTarget kcal',
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
+                  cs.onSurface),
             ],
           ),
           const SizedBox(height: 16),
 
-          // Macros principais
-          Row(
-            children: [
-              Expanded(
-                child: meter(
-                  title: 'Proteína',
-                  value: proteinG,
-                  target: proteinTargetG,
-                  color: const Color(0xFF66BB6A), // Leafy Green
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: meter(
-                  title: 'Hidratos',
-                  value: carbG,
-                  target: carbTargetG,
-                  color: const Color(0xFFFF8A4C), // Warm Tangerine
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: meter(
-                  title: 'Gordura',
-                  value: fatG,
-                  target: fatTargetG,
-                  color: const Color(0xFFFFC107), // Golden Amber
-                ),
-              ),
-            ],
+          // 1 por linha
+          meter(
+            title: 'Proteína',
+            value: proteinG,
+            target: proteinTargetG,
+            color: AppColors.leafyGreen,
           ),
+          const SizedBox(height: 14),
 
-          const SizedBox(height: 20),
-          Divider(color: cs.outlineVariant),
-          const SizedBox(height: 12),
+          meter(
+            title: 'Hidratos',
+            value: carbG,
+            target: carbTargetG,
+            color: AppColors.warmTangerine,
+          ),
+          const SizedBox(height: 14),
 
-          // Outros nutrientes
-          Row(
-            children: [
-              Expanded(
-                child: meter(
-                  title: 'Açúcares',
-                  value: sugarsG,
-                  target: sugarsTargetG == 0 ? 1 : sugarsTargetG,
-                  color: const Color(0xFFFFC107),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: meter(
-                  title: 'Fibra',
-                  value: fiberG,
-                  target: fiberTargetG == 0 ? 1 : fiberTargetG,
-                  color: const Color(0xFF66BB6A),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: meter(
-                  title: 'Sal',
-                  value: saltG,
-                  target: saltTargetG == 0 ? 1 : saltTargetG,
-                  unit: 'g',
-                  color: const Color(0xFFFF8A4C),
-                ),
-              ),
-            ],
+          meter(
+            title: 'Gordura',
+            value: fatG,
+            target: fatTargetG,
+            color: AppColors.goldenAmber,
+          ),
+          const SizedBox(height: 14),
+
+          meter(
+            title: 'Açúcares',
+            value: sugarsG,
+            target: sugarsTargetG == 0 ? 1 : sugarsTargetG,
+            color: AppColors.goldenAmber,
+          ),
+          const SizedBox(height: 14),
+
+          meter(
+            title: 'Fibra',
+            value: fiberG,
+            target: fiberTargetG == 0 ? 1 : fiberTargetG,
+            color: AppColors.leafyGreen,
+          ),
+          const SizedBox(height: 14),
+
+          meter(
+            title: 'Sal',
+            value: saltG,
+            target: saltTargetG == 0 ? 1 : saltTargetG,
+            unit: 'g',
+            color: AppColors.warmTangerine,
           ),
         ],
       ),
@@ -729,10 +734,10 @@ class _MacroSectionCard extends StatelessWidget {
       decoration: ShapeDecoration(color: bg, shape: const StadiumBorder()),
       child: Text(
         text,
-        style: const TextStyle(
+        style: TextStyle(
           fontWeight: FontWeight.w800,
-          color: Colors.white,
-        ).copyWith(color: fg),
+          color: fg,
+        ),
       ),
     );
   }

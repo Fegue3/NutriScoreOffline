@@ -1,18 +1,30 @@
 import sqlite3
 import pandas as pd
 import uuid
+import os
 
-SRC_CSV = "products_clean.csv"
-DB_PATH = "catalog.db"
-SCHEMA_SQL = "offline_schema.sql"
+# === Caminhos ===
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DB_PATH = os.path.join(BASE_DIR, "../Frontend/assets/db/nutriscore.db")
 
+SRC_CSV = os.path.join(BASE_DIR, "products_clean.csv")
+SCHEMA_SQL = os.path.join(BASE_DIR, "offline_schema.sql")
+
+# Garantir que a pasta de destino existe
+os.makedirs(os.path.dirname(FRONTEND_DB_PATH), exist_ok=True)
+
+# === Ler CSV ===
 df = pd.read_csv(SRC_CSV, encoding="utf-8", low_memory=False)
 
-con = sqlite3.connect(DB_PATH)
+# === Criar / abrir BD no destino final ===
+con = sqlite3.connect(FRONTEND_DB_PATH)
 cur = con.cursor()
+
+# === Aplicar schema ===
 with open(SCHEMA_SQL, "r", encoding="utf-8") as f:
     cur.executescript(f.read())
 
+# === Mapear colunas ===
 rename_map = {
     "product_name": "name",
     "brands": "brand",
@@ -31,6 +43,7 @@ rename_map = {
     "sodium_100g": "sodium_100g",
     "countries_tags": "countries",
 }
+
 cols_present = [c for c in rename_map.keys() if c in df.columns]
 df_m = df[cols_present].rename(columns=rename_map)
 
@@ -40,8 +53,10 @@ if "name" not in df_m.columns:
 df_m["id"] = [str(uuid.uuid4()) for _ in range(len(df_m))]
 
 valid = {"A", "B", "C", "D", "E"}
+
 def norm_grade(x):
-    if pd.isna(x): return None
+    if pd.isna(x):
+        return None
     s = str(x).strip().upper()
     return s[0] if s and s[0] in valid else None
 
@@ -72,8 +87,9 @@ product_cols = [
 ]
 df_m = df_m[[c for c in product_cols if c in df_m.columns]]
 
+# === Inserir ===
 df_m.to_sql("Product", con, if_exists="append", index=False)
 con.commit()
 con.close()
 
-print(f"✅ Inseridos {df_m.shape[0]:,} produtos em {DB_PATH}.")
+print(f"✅ Inseridos {df_m.shape[0]:,} produtos em {FRONTEND_DB_PATH}")

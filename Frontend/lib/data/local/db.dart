@@ -3,17 +3,48 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:path/path.dart' as p;
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:path_provider/path_provider.dart';
 
 part 'db.g.dart';
 
+/// Copia a BD pré-carregada (assets/db/nutriscore.db) para o storage da app
+/// no 1º arranque. Se não existir o asset, faz fallback para criar via SQL.
+Future<File> _prepareDatabaseFile() async {
+  final dir = await getApplicationDocumentsDirectory();
+  final dbPath = p.join(dir.path, 'nutriscore.db'); // nome "oficial" da app
+  final dbFile = File(dbPath);
+
+  if (await dbFile.exists()) {
+    return dbFile; // já tens BD → abre
+  }
+
+  // 1) Tenta copiar o asset pré-carregado
+  try {
+    final bytes = (await rootBundle.load('assets/db/nutriscore.db')).buffer.asUint8List();
+    await dbFile.writeAsBytes(bytes, flush: true);
+    debugPrint('✅ Copiado catálogo inicial para $dbPath');
+    return dbFile; // já vem com schema+dados → onCreate NÃO corre
+  } catch (e) {
+    debugPrint('ℹ️ Sem asset preloaded (assets/db/nutriscore.db). '
+        'Vamos criar via offline_schema.sql no onCreate. Detalhe: $e');
+  }
+
+  // 2) Fallback: deixa o Drift criar o ficheiro vazio
+  //    (o onCreate irá correr e aplicar o offline_schema.sql)
+  return dbFile;
+}
+
 LazyDatabase _openDb() {
   return LazyDatabase(() async {
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File(p.join(dir.path, 'nutriscore.db'));
-    return NativeDatabase.createInBackground(file, logStatements: kDebugMode,);
+    final file = await _prepareDatabaseFile();
+    // Se o ficheiro já vinha dos assets, tem schema + dados → onCreate não dispara.
+    // Se for novo/vazio, o SQLite cria → onCreate dispara e corremos o SQL.
+    return NativeDatabase.createInBackground(
+      file,
+      logStatements: kDebugMode,
+    );
   });
 }
 
@@ -26,30 +57,23 @@ class NutriDatabase extends _$NutriDatabase {
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-    onCreate: (m) async {
-      await m.database.customStatement('PRAGMA foreign_keys = ON;');
-      await _bootstrapFromAsset(m.database); // executa script corretamente
-    },
-    onUpgrade: (m, from, to) async {
-      await m.database.customStatement('PRAGMA foreign_keys = ON;');
-      await _ensureSchema(m.database);
-    },
-    beforeOpen: (details) async {
-      await customStatement('PRAGMA foreign_keys = ON;');
-      await _ensureSchema(this);
-    },
-  );
-
-  Future<void> _ensureSchema(GeneratedDatabase db) async {
-    final rows = await db.customSelect(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='User' LIMIT 1;"
-    ).get();
-    if (rows.isEmpty) {
-      await _bootstrapFromAsset(db);
-    }
-  }
+        onCreate: (m) async {
+          // Só corre quando o ficheiro foi criado de raiz (fallback, sem asset)
+          await m.database.customStatement('PRAGMA foreign_keys = ON;');
+          await _bootstrapFromAsset(m.database); // aplica offline_schema.sql
+        },
+        onUpgrade: (m, from, to) async {
+          await m.database.customStatement('PRAGMA foreign_keys = ON;');
+          // Se precisares de migrações futuras, mete aqui.
+        },
+        beforeOpen: (details) async {
+          await customStatement('PRAGMA foreign_keys = ON;');
+          // Se a BD veio do asset, já tem tudo criado → nada a fazer aqui.
+        },
+      );
 
   Future<void> _bootstrapFromAsset(GeneratedDatabase db) async {
+    // Cria schema via SQL (só no fallback sem asset)
     final sql = await rootBundle.loadString('assets/sql/offline_schema.sql');
     await _execSqlScript(db, sql);
   }
@@ -66,22 +90,19 @@ Future<void> _execSqlScript(GeneratedDatabase db, String script) async {
 
     final upper = line.toUpperCase();
 
-    // Entrou num CREATE TRIGGER → começa bloco
     if (!inTriggerBlock && upper.startsWith('CREATE TRIGGER')) {
       inTriggerBlock = true;
     }
 
-    buf.writeln(rawLine); // manter formatação original
+    buf.writeln(rawLine);
 
     if (inTriggerBlock) {
-      // Fim de bloco de trigger
       if (upper == 'END;' || upper.endsWith('\nEND;')) {
         await db.customStatement(buf.toString());
         buf.clear();
         inTriggerBlock = false;
       }
     } else {
-      // Statement “normal”: termina em ';'
       if (line.endsWith(';')) {
         await db.customStatement(buf.toString());
         buf.clear();

@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart' show Variable;
 import '../../domain/models.dart';
 import '../../domain/repos.dart';
+import 'utils/nutrition_calc.dart' show NutritionCalc;
 import 'db.dart';
 
 class GoalsRepoSqlite implements GoalsRepo {
@@ -9,69 +10,79 @@ class GoalsRepoSqlite implements GoalsRepo {
 
   String _isoDateOrNull(DateTime? d) => d == null ? '' : d.toIso8601String();
 
-  @override
-  Future<void> upsert(UserGoalsModel m) async {
-    await db.transaction(() async {
-      // FK on
-      await db.customStatement('PRAGMA foreign_keys = ON;');
+@override
+Future<void> upsert(UserGoalsModel m) async {
+  // ---- calcular calorias alvo se não vierem preenchidas
+  final computedDaily = () {
+    try {
+      // lazy import para evitar ciclo
+      // ignore: unused_import
+      return NutritionCalc.computeFromGoals(m).calories;
+    } catch (_) {
+      return null;
+    }
+  }();
 
-      // UPSERT (INSERT OR REPLACE porque a PK é userId)
+  final daily = m.dailyCalories ?? computedDaily;
+
+  await db.transaction(() async {
+    await db.customStatement('PRAGMA foreign_keys = ON;');
+
+    await db.customStatement(
+      '''
+      INSERT INTO UserGoals (
+        userId, sex, dateOfBirth, heightCm, currentWeightKg, targetWeightKg, targetDate, activityLevel,
+        dailyCalories, carbPercent, proteinPercent, fatPercent, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(userId) DO UPDATE SET
+        sex=excluded.sex,
+        dateOfBirth=excluded.dateOfBirth,
+        heightCm=excluded.heightCm,
+        currentWeightKg=excluded.currentWeightKg,
+        targetWeightKg=excluded.targetWeightKg,
+        targetDate=excluded.targetDate,
+        activityLevel=excluded.activityLevel,
+        dailyCalories=excluded.dailyCalories,
+        carbPercent=excluded.carbPercent,
+        proteinPercent=excluded.proteinPercent,
+        fatPercent=excluded.fatPercent,
+        updatedAt=datetime('now');
+      ''',
+      [
+        m.userId,
+        m.sex,
+        m.dateOfBirth?.toIso8601String(),
+        m.heightCm,
+        m.currentWeightKg,
+        m.targetWeightKg,
+        m.targetDate?.toIso8601String(),
+        m.activityLevel,
+        daily,                // <- aqui entra o valor calculado (ou o que veio)
+        m.carbPercent,
+        m.proteinPercent,
+        m.fatPercent,
+      ],
+    );
+
+    await db.customStatement(
+      "UPDATE User SET onboardingCompleted=1, updatedAt=datetime('now') WHERE id=?;",
+      [m.userId],
+    );
+
+    if (m.currentWeightKg > 0) {
+      final today = DateTime.now();
+      final day = DateTime(today.year, today.month, today.day);
       await db.customStatement(
         '''
-        INSERT INTO UserGoals (
-          userId, sex, dateOfBirth, heightCm, currentWeightKg, targetWeightKg, targetDate, activityLevel,
-          dailyCalories, carbPercent, proteinPercent, fatPercent, updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(userId) DO UPDATE SET
-          sex=excluded.sex,
-          dateOfBirth=excluded.dateOfBirth,
-          heightCm=excluded.heightCm,
-          currentWeightKg=excluded.currentWeightKg,
-          targetWeightKg=excluded.targetWeightKg,
-          targetDate=excluded.targetDate,
-          activityLevel=excluded.activityLevel,
-          dailyCalories=excluded.dailyCalories,
-          carbPercent=excluded.carbPercent,
-          proteinPercent=excluded.proteinPercent,
-          fatPercent=excluded.fatPercent,
-          updatedAt=datetime('now');
+        INSERT OR REPLACE INTO WeightLog (id, userId, day, weightKg, source, createdAt)
+        VALUES (hex(randomblob(16)), ?, ?, ?, 'onboarding', datetime('now'));
         ''',
-        [
-          m.userId,
-          m.sex,
-          m.dateOfBirth?.toIso8601String(),
-          m.heightCm,
-          m.currentWeightKg,
-          m.targetWeightKg,
-          m.targetDate?.toIso8601String(),
-          m.activityLevel,
-          m.dailyCalories,
-          m.carbPercent,
-          m.proteinPercent,
-          m.fatPercent,
-        ],
+        [m.userId, day.toIso8601String().substring(0, 10), m.currentWeightKg],
       );
+    }
+  });
+}
 
-      // marca onboarding concluído
-      await db.customStatement(
-        "UPDATE User SET onboardingCompleted=1, updatedAt=datetime('now') WHERE id=?;",
-        [m.userId],
-      );
-
-      // cria 1º weight log para hoje (se fizer sentido)
-      if (m.currentWeightKg > 0) {
-        final today = DateTime.now();
-        final day = DateTime(today.year, today.month, today.day); // local
-        await db.customStatement(
-          '''
-          INSERT OR REPLACE INTO WeightLog (id, userId, day, weightKg, source, createdAt)
-          VALUES (hex(randomblob(16)), ?, ?, ?, 'onboarding', datetime('now'));
-          ''',
-          [m.userId, day.toIso8601String().substring(0, 10), m.currentWeightKg],
-        );
-      }
-    });
-  }
 
   @override
   Future<UserGoalsModel?> getByUser(String userId) async {

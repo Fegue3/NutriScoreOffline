@@ -1,5 +1,4 @@
 // lib/app/router/app_router.dart
-import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:drift/drift.dart' show Variable;

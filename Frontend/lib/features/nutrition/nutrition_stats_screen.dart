@@ -1,6 +1,7 @@
 // lib/features/nutrition/nutrition_stats_screen.dart
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../../app/di.dart';
 
 /// NutriScore – NutritionStatsScreen (UI puro, sem chamadas a backend)
 /// - Pie de calorias por refeição (CustomPaint)
@@ -16,34 +17,38 @@ class NutritionStatsScreen extends StatefulWidget {
 class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
   int _dayOffset = 0; // 0=hoje, -1=ontem, 1=amanhã…
 
-  // ===== Metas (mock)
-  int kcalTarget = 2200;
-  double proteinTargetG = 130;
-  double carbTargetG = 260;
-  double fatTargetG = 70;
+  // ===== Metas (preenchidas a partir do GoalsRepo)
+  int kcalTarget = 0;
+  double proteinTargetG = 0;
+  double carbTargetG = 0;
+  double fatTargetG = 0;
+
+  // Limites “saúde pública” (mantém defaults caso não tenhas outros)
   double sugarsTargetG = 50;
   double fiberTargetG = 30;
   double saltTargetG = 5;
 
-  // ===== Dados do dia (mock – variam com offset)
+  // ===== Dados do dia (vindos de stats/meals)
   Map<MealSlot, double> _kcalByMeal = const {
-    MealSlot.breakfast: 380,
-    MealSlot.lunch: 760,
-    MealSlot.snack: 260,
-    MealSlot.dinner: 540,
+    MealSlot.breakfast: 0,
+    MealSlot.lunch: 0,
+    MealSlot.snack: 0,
+    MealSlot.dinner: 0,
   };
 
-  double proteinG = 95;
-  double carbG = 210;
-  double fatG = 58;
-  double sugarsG = 38;
-  double fiberG = 22;
-  double saltG = 3.6;
+  double proteinG = 0;
+  double carbG = 0;
+  double fatG = 0;
+  double sugarsG = 0;
+  double fiberG = 0;
+  double saltG = 0;
+
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _applyMockForOffset(0);
+    _loadForOffset(0);
   }
 
   String _labelFor(BuildContext ctx) {
@@ -54,62 +59,86 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
     return MaterialLocalizations.of(ctx).formatMediumDate(d);
   }
 
-  double get _totalKcal =>
-      _kcalByMeal.values.fold<double>(0, (a, b) => a + b);
+  double get _totalKcal => _kcalByMeal.values.fold<double>(0, (a, b) => a + b);
 
   void _go(int delta) {
     if (delta == 0) return;
-    setState(() {
-      _dayOffset += delta;
-      _applyMockForOffset(_dayOffset);
-    });
+    _loadForOffset(_dayOffset + delta);
   }
 
-  void _applyMockForOffset(int off) {
-    final mod = (off % 4).abs();
+  Future<void> _loadForOffset(int off) async {
+    setState(() {
+      _dayOffset = off;
+      _loading = true;
+    });
 
-    final base = {
-      0: const {
-        MealSlot.breakfast: 380.0,
-        MealSlot.lunch: 760.0,
-        MealSlot.snack: 260.0,
-        MealSlot.dinner: 540.0,
-      },
-      1: const {
-        MealSlot.breakfast: 420.0,
-        MealSlot.lunch: 690.0,
-        MealSlot.snack: 190.0,
-        MealSlot.dinner: 610.0,
-      },
-      2: const {
-        MealSlot.breakfast: 310.0,
-        MealSlot.lunch: 840.0,
-        MealSlot.snack: 220.0,
-        MealSlot.dinner: 520.0,
-      },
-      3: const {
-        MealSlot.breakfast: 360.0,
-        MealSlot.lunch: 720.0,
-        MealSlot.snack: 300.0,
-        MealSlot.dinner: 480.0,
-      },
-    }[mod]!;
+    try {
+      final u = await di.userRepo.currentUser();
+      if (u == null) {
+        setState(() => _loading = false);
+        return;
+      }
 
-    _kcalByMeal = base;
+      // ---- metas (GoalsRepo)
+      final goals = await di.goalsRepo.getByUser(u.id);
+      kcalTarget = goals?.dailyCalories ?? 0;
 
-    final macroBase = [
-      (protein: 95.0, carb: 210.0, fat: 58.0, sugars: 38.0, fiber: 22.0, salt: 3.6),
-      (protein: 102.0, carb: 198.0, fat: 62.0, sugars: 41.0, fiber: 25.0, salt: 4.1),
-      (protein: 87.0, carb: 232.0, fat: 66.0, sugars: 36.0, fiber: 28.0, salt: 3.3),
-      (protein: 110.0, carb: 188.0, fat: 54.0, sugars: 34.0, fiber: 26.0, salt: 4.4),
-    ][mod];
+      if (kcalTarget > 0) {
+        final carbPct = (goals?.carbPercent ?? 50).toDouble();
+        final protPct = (goals?.proteinPercent ?? 20).toDouble();
+        final fatPct = (goals?.fatPercent ?? 30).toDouble();
 
-    proteinG = macroBase.protein;
-    carbG = macroBase.carb;
-    fatG = macroBase.fat;
-    sugarsG = macroBase.sugars;
-    fiberG = macroBase.fiber;
-    saltG = macroBase.salt;
+        // 4 kcal/g (carb/prot), 9 kcal/g (fat)
+        carbTargetG = (kcalTarget * carbPct / 100.0) / 4.0;
+        proteinTargetG = (kcalTarget * protPct / 100.0) / 4.0;
+        fatTargetG = (kcalTarget * fatPct / 100.0) / 9.0;
+      } else {
+        // se não houver dailyCalories ainda, zera os alvos de macros
+        carbTargetG = proteinTargetG = fatTargetG = 0;
+      }
+
+      // ---- stats do dia (StatsRepo)
+      final day = DateTime.now().toUtc().add(Duration(days: _dayOffset));
+      final cached = await di.statsRepo.getCached(u.id, day);
+      final stats = cached ?? await di.statsRepo.computeDaily(u.id, day);
+
+      proteinG = stats.protein;
+      carbG = stats.carb;
+      fatG = stats.fat;
+      sugarsG = stats.sugars;
+      fiberG = stats.fiber;
+      saltG = stats.salt;
+
+      // ---- kcal por refeição (MealsRepo)
+      final meals = await di.mealsRepo.getMealsForDay(u.id, day);
+      double b = 0, l = 0, s = 0, d = 0;
+      for (final m in meals) {
+        switch (m.type) {
+          case 'BREAKFAST':
+            b += m.totalKcal;
+            break;
+          case 'LUNCH':
+            l += m.totalKcal;
+            break;
+          case 'SNACK':
+            s += m.totalKcal;
+            break;
+          case 'DINNER':
+            d += m.totalKcal;
+            break;
+        }
+      }
+      _kcalByMeal = {
+        MealSlot.breakfast: b,
+        MealSlot.lunch: l,
+        MealSlot.snack: s,
+        MealSlot.dinner: d,
+      };
+    } catch (_) {
+      // opcional: snack/erro
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
@@ -132,9 +161,7 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
         ),
       ),
       body: RefreshIndicator(
-        onRefresh: () async {
-          return;
-        },
+        onRefresh: () => _loadForOffset(_dayOffset),
         child: Column(
           children: [
             // ===== HERO – navegação por dia =====
@@ -377,9 +404,7 @@ class _CaloriesMealsPieCard extends StatelessWidget {
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          Expanded(
-                            child: Text('Total', style: tt.bodyMedium),
-                          ),
+                          Expanded(child: Text('Total', style: tt.bodyMedium)),
                           Text(
                             '${totalKcal.round()} kcal',
                             style: tt.titleSmall?.copyWith(
@@ -391,9 +416,7 @@ class _CaloriesMealsPieCard extends StatelessWidget {
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          Expanded(
-                            child: Text('Meta', style: tt.bodyMedium),
-                          ),
+                          Expanded(child: Text('Meta', style: tt.bodyMedium)),
                           Text(
                             '${goalKcal.round()} kcal',
                             style: tt.titleSmall?.copyWith(
@@ -432,10 +455,7 @@ class _MealsPie extends StatelessWidget {
     return CustomPaint(
       painter: _PiePainter(
         values: data.map((e) => e.value).toList(),
-        colors: List.generate(
-          data.length,
-          (i) => palette[i % palette.length],
-        ),
+        colors: List.generate(data.length, (i) => palette[i % palette.length]),
         background: background,
         sum: sum,
       ),
@@ -479,8 +499,9 @@ class _PiePainter extends CustomPainter {
     double start = -math.pi / 2;
     for (int i = 0; i < values.length; i++) {
       // ---- FIX 1: garantir double
-      final double sweep =
-          sum <= 0 ? 0.0 : ((values[i] / sum) * (math.pi * 2)).toDouble();
+      final double sweep = sum <= 0
+          ? 0.0
+          : ((values[i] / sum) * (math.pi * 2)).toDouble();
 
       final p = Paint()
         ..color = colors[i]
@@ -620,7 +641,11 @@ class _MacroSectionCard extends StatelessWidget {
               Expanded(child: Text('Calorias', style: tt.titleMedium)),
               _chip('$kcalUsed kcal usados', cs.primary, Colors.white),
               const SizedBox(width: 8),
-              _chip('meta $kcalTarget kcal', cs.surfaceContainerHighest, cs.onSurface),
+              _chip(
+                'meta $kcalTarget kcal',
+                cs.surfaceContainerHighest,
+                cs.onSurface,
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -704,8 +729,10 @@ class _MacroSectionCard extends StatelessWidget {
       decoration: ShapeDecoration(color: bg, shape: const StadiumBorder()),
       child: Text(
         text,
-        style: const TextStyle(fontWeight: FontWeight.w800, color: Colors.white)
-            .copyWith(color: fg),
+        style: const TextStyle(
+          fontWeight: FontWeight.w800,
+          color: Colors.white,
+        ).copyWith(color: fg),
       ),
     );
   }

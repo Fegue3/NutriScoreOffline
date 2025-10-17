@@ -5,8 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import '../../app/di.dart';
 import '../../domain/models.dart';
-import '../../app/di.dart';
-import 'package:drift/drift.dart' show Variable;
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -68,8 +66,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   // --------- Fluxo de cancelamento no 1º passo (apenas navegação UI) ---------
   Future<void> _cancelAndExit() async {
+    if (_submitting) return;
+    try {
+      await di.userRepo.deleteAccount(); // ou: await di.userRepo.signOut();
+    } catch (_) {}
     if (!mounted) return;
-    context.go('/signup');
+    context.go('/'); // volta ao Hub
   }
 
   // -------- Navegação dos passos --------
@@ -277,9 +279,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           elevation: 0,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_rounded),
-            onPressed: () {
-              if (!_submitting) context.go('/'); // sempre hub
-            },
+            onPressed: _submitting
+                ? null
+                : () async {
+                    await di.userRepo.deleteAccount(); // limpa a sessão
+                    if (!mounted) return;
+                    context.go('/'); // Hub
+                  },
           ),
         ),
         body: SafeArea(

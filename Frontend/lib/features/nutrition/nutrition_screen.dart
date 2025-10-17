@@ -1,6 +1,8 @@
 // lib/features/nutrition/nutrition_screen.dart
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../app/di.dart';
+import '../../domain/models.dart';
 
 /// NutriScore – NutritionScreen (UI puro, sem chamadas a backend)
 class NutritionScreen extends StatefulWidget {
@@ -16,7 +18,71 @@ class _NutritionScreenState extends State<NutritionScreen> {
 
   // ===== Estado calorias (resumo topo – UI) =====
   final int _fallbackDailyGoal = 2200;
-  int get _goal => _fallbackDailyGoal;
+  int get _goal => _dailyGoal > 0 ? _dailyGoal : _fallbackDailyGoal;
+
+  int _dailyGoal = 0;
+
+  MealType _parseMealType(String s) {
+    switch (s) {
+      case 'BREAKFAST':
+        return MealType.breakfast;
+      case 'LUNCH':
+        return MealType.lunch;
+      case 'SNACK':
+        return MealType.snack;
+      case 'DINNER':
+        return MealType.dinner;
+      default:
+        return MealType.lunch;
+    }
+  }
+
+  List<MealEntry> _toEntries(List<MealWithItems> meals) {
+    final out = <MealEntry>[];
+    for (final m in meals) {
+      final typ = _parseMealType(m.type);
+      for (final it in m.items) {
+        out.add(
+          MealEntry(
+            id: it.id,
+            name: (it.productBarcode ?? it.customFoodId ?? 'Alimento'),
+            meal: typ,
+            brand: null,
+            barcode: it.productBarcode,
+            calories: it.kcal,
+            protein: it.protein,
+            carbs: it.carb,
+            fat: it.fat,
+            quantityGrams: it.gramsTotal,
+            quantityMl: it.unit == 'ML' ? it.quantity : null,
+            servings: it.unit == 'PIECE' ? it.quantity : null,
+          ),
+        );
+      }
+    }
+    return out;
+  }
+
+  Future<void> _loadDay() async {
+    setState(() {}); // dispara loading leve se quiseres (podes trocar por flag)
+    try {
+      final u = await di.userRepo.currentUser();
+      if (u == null) return;
+
+      // Goal diário
+      final goals = await di.goalsRepo.getByUser(u.id);
+      _dailyGoal = goals?.dailyCalories ?? 0;
+
+      // Refeições do dia
+      final dayCanon = DateTime.now().toUtc().add(Duration(days: _dayOffset));
+      final meals = await di.mealsRepo.getMealsForDay(u.id, dayCanon);
+      _entries = _toEntries(meals);
+    } catch (_) {
+      // opcional: snack/erro
+    } finally {
+      if (mounted) setState(() {});
+    }
+  }
 
   // ===== Estado das refeições (UI local) =====
   List<MealEntry> _entries = const [];
@@ -47,123 +113,10 @@ class _NutritionScreenState extends State<NutritionScreen> {
         '${d.day.toString().padLeft(2, '0')}';
   }
 
-  // ===== Mock DB por dia (UI) =====
-  final Map<int, List<MealEntry>> _mockByOffset = {};
-
   @override
   void initState() {
     super.initState();
-    _seedMock();
-    _loadForOffset(0);
-  }
-
-  void _seedMock() {
-    // Hoje (0)
-    _mockByOffset[0] = [
-      const MealEntry(
-        id: '1',
-        name: 'Iogurte Natural',
-        brand: 'Lacto PT',
-        barcode: '5601234567890',
-        meal: MealType.breakfast,
-        calories: 140,
-        protein: 9,
-        carbs: 16,
-        fat: 4,
-        quantityGrams: 200,
-      ),
-      const MealEntry(
-        id: '2',
-        name: 'Pão Integral',
-        brand: 'Panis',
-        barcode: '5609876543210',
-        meal: MealType.lunch,
-        calories: 280,
-        protein: 10,
-        carbs: 48,
-        fat: 4,
-        servings: 2,
-      ),
-      const MealEntry(
-        id: '3',
-        name: 'Peito de Frango Grelhado',
-        brand: 'Caseiro',
-        meal: MealType.lunch,
-        calories: 230,
-        protein: 42,
-        carbs: 0,
-        fat: 5,
-        quantityGrams: 180,
-      ),
-      const MealEntry(
-        id: '4',
-        name: 'Maçã',
-        brand: 'Bio',
-        meal: MealType.snack,
-        calories: 80,
-        protein: 0.3,
-        carbs: 19,
-        fat: 0.2,
-        quantityGrams: 150,
-      ),
-      const MealEntry(
-        id: '5',
-        name: 'Sopa de Legumes',
-        brand: 'Caseira',
-        meal: MealType.dinner,
-        calories: 120,
-        protein: 3,
-        carbs: 18,
-        fat: 3,
-        quantityMl: 350,
-      ),
-    ];
-
-    // Ontem (-1)
-    _mockByOffset[-1] = [
-      const MealEntry(
-        id: '6',
-        name: 'Aveia com Leite',
-        brand: 'Caseiro',
-        meal: MealType.breakfast,
-        calories: 320,
-        protein: 14,
-        carbs: 50,
-        fat: 8,
-        quantityGrams: 250,
-      ),
-      const MealEntry(
-        id: '7',
-        name: 'Salada de Atum',
-        brand: 'Mar Azul',
-        meal: MealType.lunch,
-        calories: 360,
-        protein: 30,
-        carbs: 14,
-        fat: 18,
-        quantityGrams: 300,
-      ),
-      const MealEntry(
-        id: '8',
-        name: 'Iogurte Skyr',
-        brand: 'Nordic',
-        meal: MealType.snack,
-        calories: 100,
-        protein: 17,
-        carbs: 6,
-        fat: 0.2,
-        quantityGrams: 150,
-      ),
-    ];
-
-    // Amanhã (1) – vazio para demo
-    _mockByOffset[1] = [];
-  }
-
-  void _loadForOffset(int offset) {
-    setState(() {
-      _entries = List<MealEntry>.from(_mockByOffset[offset] ?? const []);
-    });
+    _loadDay();
   }
 
   int _sumKcal(Iterable<MealEntry> xs) {
@@ -188,25 +141,29 @@ class _NutritionScreenState extends State<NutritionScreen> {
       _slideDir = delta > 0 ? 1 : -1;
       _dayOffset += delta;
     });
-    _loadForOffset(_dayOffset);
+    _loadDay();
   }
 
   // ======= NAV: Adicionar alimento (vai para /add-food) =======
   void _openAddFor(String mealTitle) {
-    context.push(
-      '/add-food',
-      extra: {
-        'mealTitle': mealTitle,
-        'dateYmd': _ymd,
-      },
-    );
+    context
+        .push(
+          '/add-food',
+          extra: {
+            'mealTitle': mealTitle,
+            'dateYmd': _ymd, // o teu label “yyyy-mm-dd” para UI
+          },
+        )
+        .then((_) => _loadDay()); // <- refresca ao regressar
   }
 
-  void _removeEntry(MealEntry e) {
-    setState(() {
-      _entries = _entries.where((x) => x.id != e.id).toList();
-      _mockByOffset[_dayOffset] = _entries;
-    });
+  void _removeEntry(MealEntry e) async {
+    try {
+      await di.mealsRepo.removeMealItem(e.id);
+    } catch (_) {
+      // opcional: snack erro
+    }
+    _loadDay();
   }
 
   // ======= NAV: Detalhe do produto (vai para productDetail) =======
@@ -215,12 +172,12 @@ class _NutritionScreenState extends State<NutritionScreen> {
     final baseQty = e.quantityGrams != null
         ? '${e.quantityGrams!.round()} g'
         : (e.quantityMl != null
-            ? '${e.quantityMl!.round()} ml'
-            : (e.servings != null
-                ? (e.servings! % 1 == 0
-                    ? '${e.servings!.toInt()} porção'
-                    : '${e.servings!.toStringAsFixed(1)} porções')
-                : '1 porção'));
+              ? '${e.quantityMl!.round()} ml'
+              : (e.servings != null
+                    ? (e.servings! % 1 == 0
+                          ? '${e.servings!.toInt()} porção'
+                          : '${e.servings!.toStringAsFixed(1)} porções')
+                    : '1 porção'));
 
     context.pushNamed(
       'productDetail',
@@ -588,8 +545,7 @@ class _CalorieSummaryConnectedCompact extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: onP.withValues(alpha: .12),
                   borderRadius: BorderRadius.circular(8),
@@ -953,10 +909,9 @@ class _MealItemsList extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              color:
-                                  Theme.of(context).colorScheme.onSurface,
-                              fontWeight: FontWeight.w800,
-                            ),
+                          color: Theme.of(context).colorScheme.onSurface,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                       if (subtitleParts.isNotEmpty)
                         Padding(
@@ -965,13 +920,11 @@ class _MealItemsList extends StatelessWidget {
                             subtitleParts.join(' • '),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
+                            style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
                                 ),
                           ),
                         ),
@@ -980,13 +933,11 @@ class _MealItemsList extends StatelessWidget {
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
                             qtyLabel,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
+                            style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
                                 ),
                           ),
                         ),
@@ -996,8 +947,10 @@ class _MealItemsList extends StatelessWidget {
 
                 // badge kcal
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   decoration: ShapeDecoration(
                     color: Theme.of(context).colorScheme.primary,
                     shape: const StadiumBorder(),
@@ -1005,10 +958,10 @@ class _MealItemsList extends StatelessWidget {
                   child: Text(
                     "$kcal kcal",
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: .2,
-                        ),
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: .2,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1026,8 +979,7 @@ class _MealItemsList extends StatelessWidget {
                     minWidth: 40,
                     minHeight: 40,
                   ),
-                  onPressed:
-                      (onRemove == null) ? null : () => onRemove!(e),
+                  onPressed: (onRemove == null) ? null : () => onRemove!(e),
                 ),
                 const SizedBox(width: 6),
               ],
@@ -1164,8 +1116,9 @@ class _WaterCardState extends State<_WaterCard> {
                       child: LinearProgressIndicator(
                         value: progress,
                         minHeight: 12,
-                        backgroundColor:
-                            cs.outlineVariant.withValues(alpha: .4),
+                        backgroundColor: cs.outlineVariant.withValues(
+                          alpha: .4,
+                        ),
                         valueColor: AlwaysStoppedAnimation(cs.primary),
                       ),
                     ),
@@ -1230,17 +1183,20 @@ class _CustomAmountSheetState extends State<_CustomAmountSheet> {
     final inset = MediaQuery.of(context).viewInsets.bottom;
 
     return Padding(
-      padding:
-          EdgeInsets.only(left: 16, right: 16, bottom: inset + 16, top: 12),
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        bottom: inset + 16,
+        top: 12,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             "Adicionar água",
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(fontWeight: FontWeight.w800),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 16),
           Row(

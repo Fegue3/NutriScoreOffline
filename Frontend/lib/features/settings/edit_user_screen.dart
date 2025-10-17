@@ -2,8 +2,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-
+import '../../app/di.dart';
 import '../../core/theme.dart';
+import '../../domain/models.dart';
 
 class EditUserScreen extends StatefulWidget {
   const EditUserScreen({super.key});
@@ -45,7 +46,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
   @override
   void initState() {
     super.initState();
-    _bootstrapUiOnly();
+    _loadData();
   }
 
   @override
@@ -91,26 +92,114 @@ class _EditUserScreenState extends State<EditUserScreen> {
     return res;
   }
 
-  Future<void> _bootstrapUiOnly() async {
-    // UI-only: preenche com placeholders/simples e remove qualquer chamada de backend
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-    if (!mounted) return;
+  Future<void> _loadData() async {
+  setState(() => _loading = true);
+  try {
+    final u = await di.userRepo.currentUser();
+    if (u == null) {
+      setState(() {
+        _loading = false;
+      });
+      return;
+    }
+
+    // ler goals
+    final g = await di.goalsRepo.getByUser(u.id);
 
     setState(() {
-      // Exemplos (podes limpar se quiseres começar tudo vazio)
-      _nameCtrl.text = '';
-      _sex = null;
-      _activity = null;
-      _heightCtrl.text = '';
-      _weightCtrl.text = '';
-      _targetWeightCtrl.text = '';
-      _dobIso = null;
-      _dobCtrl.text = '';
-      _targetDateIso = null;
-      _targetDateCtrl.text = '';
+      _nameCtrl.text = u.name ?? '';
+
+      if (g != null) {
+        _sex = g.sex;
+        _activity = g.activityLevel;
+
+        _heightCtrl.text =
+            g.heightCm > 0 ? g.heightCm.toString() : '';
+
+        _weightCtrl.text =
+            g.currentWeightKg > 0 ? g.currentWeightKg.toStringAsFixed(1) : '';
+
+        _targetWeightCtrl.text =
+            g.targetWeightKg > 0 ? g.targetWeightKg.toStringAsFixed(1) : '';
+
+        _dobIso = g.dateOfBirth;
+        _dobCtrl.text = g.dateOfBirth == null ? '' : _fmtDate(g.dateOfBirth!);
+
+        _targetDateIso = g.targetDate;
+        _targetDateCtrl.text =
+            g.targetDate == null ? '' : _fmtDate(g.targetDate!);
+      } else {
+        // vazio por omissão
+        _sex = null;
+        _activity = null;
+        _heightCtrl.text = '';
+        _weightCtrl.text = '';
+        _targetWeightCtrl.text = '';
+        _dobIso = null;
+        _dobCtrl.text = '';
+        _targetDateIso = null;
+        _targetDateCtrl.text = '';
+      }
+
       _loading = false;
     });
+  } catch (_) {
+    setState(() => _loading = false);
   }
+}
+
+Future<void> _save() async {
+  if (_saving) return;
+  if (!_form.currentState!.validate()) return;
+
+  setState(() => _saving = true);
+
+  try {
+    final u = await di.userRepo.currentUser();
+    if (u == null) throw Exception('Sem sessão');
+
+    int? _int(String s) => int.tryParse(s.trim());
+    double? _double(String s) =>
+        double.tryParse(s.trim().replaceAll(',', '.'));
+
+    final heightCm = _int(_heightCtrl.text) ?? 0;
+    final weightKg = _double(_weightCtrl.text) ?? 0.0;
+    final targetKg = _double(_targetWeightCtrl.text) ?? 0.0;
+
+    final goals = UserGoalsModel(
+      userId: u.id,
+      sex: _sex ?? 'OTHER',
+      dateOfBirth: _dobIso,
+      heightCm: heightCm,
+      currentWeightKg: weightKg,
+      targetWeightKg: targetKg,
+      targetDate: _targetDateIso,
+      activityLevel: _activity ?? 'sedentary',
+      // deixa null para forçar cálculo no repo (ou calcula já aqui se preferires)
+      dailyCalories: null,
+      carbPercent: null,
+      proteinPercent: null,
+      fatPercent: null,
+    );
+
+    await di.goalsRepo.upsert(goals);
+
+    // (opcional) atualizar nome do utilizador se quiseres (tens repo p/ isso?)
+    // Ex.: await di.userRepo.updateName(u.id, _nameCtrl.text);
+
+    if (!mounted) return;
+    _showSuccessToast();
+    _goBackToSettings();
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Falha a guardar. Tenta novamente.')),
+    );
+  } finally {
+    if (mounted) setState(() => _saving = false);
+  }
+}
+
 
   // ---------- UI bits ----------
   InputDecoration _dec({
@@ -365,7 +454,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
         child: SizedBox(
           width: double.infinity,
           child: FilledButton(
-            onPressed: _saving ? null : _saveUiOnly,
+            onPressed: _saving ? null : _save,
             style: FilledButton.styleFrom(
               backgroundColor: cs.primary,
               foregroundColor: cs.onPrimary,

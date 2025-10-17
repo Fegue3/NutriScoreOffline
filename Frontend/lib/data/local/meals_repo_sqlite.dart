@@ -4,7 +4,7 @@ import '../../domain/models.dart';
 import '../../domain/repos.dart';
 import 'db.dart';
 import 'utils/dates.dart';
-import 'utils/nutrition_calc.dart';
+import 'utils/food_calc.dart';
 
 class MealsRepoSqlite implements MealsRepo {
   final NutriDatabase db;

@@ -264,10 +264,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    return WillPopScope(
-      onWillPop: () async {
-        if (!_submitting) context.go('/'); // força ir para a hub
-        return false; // bloqueia o pop normal
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        if (!_submitting) {
+          final router = GoRouter.of(context); // captura síncrona, evita lint
+          router.go('/'); // vai para o Hub
+        }
       },
       child: Scaffold(
         backgroundColor: cs.surface,
@@ -282,9 +286,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             onPressed: _submitting
                 ? null
                 : () async {
-                    await di.userRepo.deleteAccount(); // limpa a sessão
-                    if (!mounted) return;
-                    context.go('/'); // Hub
+                    final ctx = context; // <- captura síncrona
+                    await di.userRepo.deleteAccount();
+
+                    if (!ctx.mounted) return; // <- verifica o MESMO ctx
+                    ctx.go('/'); // go_router extension
                   },
           ),
         ),
@@ -811,7 +817,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(
-          value: _activity,
+          initialValue: _activity,
           items: _activities
               .map(
                 (a) => DropdownMenuItem<String>(value: a.$1, child: Text(a.$2)),

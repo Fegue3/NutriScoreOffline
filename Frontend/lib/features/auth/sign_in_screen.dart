@@ -45,7 +45,7 @@ class _SignInScreenState extends State<SignInScreen> {
     if (error != null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error!)));
+      ).showSnackBar(SnackBar(content: Text(error)));
       return;
     }
 

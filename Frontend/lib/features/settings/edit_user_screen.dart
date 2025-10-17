@@ -158,13 +158,13 @@ Future<void> _save() async {
     final u = await di.userRepo.currentUser();
     if (u == null) throw Exception('Sem sessão');
 
-    int? _int(String s) => int.tryParse(s.trim());
-    double? _double(String s) =>
+    int? toInt(String s) => int.tryParse(s.trim());
+    double? toDouble(String s) =>
         double.tryParse(s.trim().replaceAll(',', '.'));
 
-    final heightCm = _int(_heightCtrl.text) ?? 0;
-    final weightKg = _double(_weightCtrl.text) ?? 0.0;
-    final targetKg = _double(_targetWeightCtrl.text) ?? 0.0;
+    final heightCm = toInt(_heightCtrl.text) ?? 0;
+    final weightKg = toDouble(_weightCtrl.text) ?? 0.0;
+    final targetKg = toDouble(_targetWeightCtrl.text) ?? 0.0;
 
     final goals = UserGoalsModel(
       userId: u.id,
@@ -257,19 +257,6 @@ Future<void> _save() async {
     );
   }
 
-  Future<void> _saveUiOnly() async {
-    if (_saving) return;
-    if (!_form.currentState!.validate()) return;
-
-    setState(() => _saving = true);
-    // Simula um pequeno processamento local
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    if (!mounted) return;
-
-    setState(() => _saving = false);
-    _showSuccessToast();
-    _goBackToSettings();
-  }
 
   @override
   Widget build(BuildContext context) {

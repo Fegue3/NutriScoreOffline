@@ -49,7 +49,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     if (error != null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error!)));
+      ).showSnackBar(SnackBar(content: Text(error)));
       return;
     }
 

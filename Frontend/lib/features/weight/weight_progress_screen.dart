@@ -1,4 +1,6 @@
 // lib/features/weight/weight_progress_screen.dart
+// ignore_for_file: unused_element, unused_element_parameter
+
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:go_router/go_router.dart';

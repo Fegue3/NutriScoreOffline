@@ -288,7 +288,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           title: 'Terminar sessão',
                           onTap: () async {
                             await di.userRepo.signOut();
-                            if (!mounted) return;
+                            if (!context.mounted) return;
                             GoRouter.of(context).go('/');
                           },
                         ),

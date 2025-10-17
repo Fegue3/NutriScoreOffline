@@ -163,8 +163,10 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
   // 1) Scanner -> /scan; se devolver um barcode (String), preenche pesquisa e procura
   Future<void> _openScanner() async {
     final res = await context.push<String>('/scan');
-    if (!mounted)
-      return; // boa prática para o lint "use_build_context_synchronously"
+    if (!mounted) {
+      return;
+    }
+    // boa prática para o lint "use_build_context_synchronously"
     if (res is String && res.trim().isNotEmpty) {
       _searchCtrl.text = res.trim();
       await _onSearchSubmitted(_searchCtrl.text);
@@ -338,13 +340,18 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
                                   : "Atualizar histórico",
                               icon: const Icon(Icons.refresh_rounded),
                               onPressed: () async {
+                                final messenger = ScaffoldMessenger.of(
+                                  context,
+                                ); // capturado síncrono
+
                                 if (_tab == _AddTab.favorites) {
                                   await _reloadFavorites();
                                 } else {
                                   await _reloadHistory();
                                 }
-                                if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
+
+                                // já não precisas do mounted aqui; não estás a usar o context, só o messenger capturado
+                                messenger.showSnackBar(
                                   const SnackBar(content: Text('Atualizado.')),
                                 );
                               },
@@ -443,10 +450,12 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
 
                   // subtítulo: marca • código • data
                   final subtitleParts = <String>[];
-                  if ((h.brand ?? '').trim().isNotEmpty)
+                  if ((h.brand ?? '').trim().isNotEmpty) {
                     subtitleParts.add(h.brand!.trim());
-                  if ((h.barcode ?? '').trim().isNotEmpty)
+                  }
+                  if ((h.barcode ?? '').trim().isNotEmpty) {
                     subtitleParts.add(h.barcode!.trim());
+                  }
                   if (scanned != null) subtitleParts.add(_fmtDate(scanned));
 
                   return _HistoryTile(
@@ -811,6 +820,7 @@ class _FavoriteTile extends StatelessWidget {
     required this.barcode,
     this.kcal100,
     this.onTap,
+    // ignore: unused_element_parameter
     this.brand,
   });
 

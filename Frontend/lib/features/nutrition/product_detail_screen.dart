@@ -127,7 +127,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         ),
       );
     }();
-     _syncFavoriteInitial();
+    _syncFavoriteInitial();
   }
 
   Future<void> _syncFavoriteInitial() async {
@@ -291,15 +291,23 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                         (widget.barcode ?? '').isEmpty) {
                                       return;
                                     }
-                                    
+
                                     setState(() => _favoritedBusy = true);
+
                                     final nowFav = await di.favoritesRepo
                                         .toggle(user.id, widget.barcode!);
-                                    if (!mounted) return;
+
+                                    if (!mounted){
+                                      return;
+                                    }
                                     setState(() {
                                       _favorited = nowFav;
                                       _favoritedBusy = false;
                                     });
+
+                                    if (!context.mounted){
+                                      return; // <- protege o uso do BuildContext
+                                    }
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                         content: Text(
@@ -494,7 +502,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         ),
                       );
 
-                      if (!mounted) return;
+                      if (!context.mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(

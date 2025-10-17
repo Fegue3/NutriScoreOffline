@@ -8,8 +8,6 @@ class GoalsRepoSqlite implements GoalsRepo {
   final NutriDatabase db;
   GoalsRepoSqlite(this.db);
 
-  String _isoDateOrNull(DateTime? d) => d == null ? '' : d.toIso8601String();
-
 @override
 Future<void> upsert(UserGoalsModel m) async {
   // ---- calcular calorias alvo se não vierem preenchidas
@@ -98,16 +96,16 @@ Future<void> upsert(UserGoalsModel m) async {
     if (rows.isEmpty) return null;
     final r = rows.first.data;
 
-    DateTime? _parse(String? s) => (s == null || s.isEmpty) ? null : DateTime.parse(s);
+    DateTime? parseDate(String? s) => (s == null || s.isEmpty) ? null : DateTime.parse(s);
 
     return UserGoalsModel(
       userId: r['userId'] as String,
       sex: r['sex'] as String? ?? 'OTHER',
-      dateOfBirth: _parse(r['dateOfBirth'] as String?),
+      dateOfBirth: parseDate(r['dateOfBirth'] as String?),
       heightCm: (r['heightCm'] as int?) ?? 0,
       currentWeightKg: (r['currentWeightKg'] as num?)?.toDouble() ?? 0,
       targetWeightKg: (r['targetWeightKg'] as num?)?.toDouble() ?? 0,
-      targetDate: _parse(r['targetDate'] as String?),
+      targetDate: parseDate(r['targetDate'] as String?),
       activityLevel: r['activityLevel'] as String? ?? 'sedentary',
       dailyCalories: r['dailyCalories'] as int?,
       carbPercent: r['carbPercent'] as int?,

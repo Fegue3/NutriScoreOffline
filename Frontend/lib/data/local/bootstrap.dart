@@ -59,7 +59,7 @@ List<String> _splitSqlStatements(String sql) {
   final StringBuffer buf = StringBuffer();
   bool inTrigger = false;
 
-  bool _isEndLine(String l) =>
+  bool isEndLine(String l) =>
       l.toUpperCase() == 'END;' || l.toUpperCase().endsWith(' END;');
 
   for (final line in lines) {
@@ -74,7 +74,7 @@ List<String> _splitSqlStatements(String sql) {
 
     if (inTrigger) {
       // num trigger só termina quando aparecer END;
-      if (_isEndLine(line)) {
+      if (isEndLine(line)) {
         out.add(buf.toString());
         buf.clear();
         inTrigger = false;

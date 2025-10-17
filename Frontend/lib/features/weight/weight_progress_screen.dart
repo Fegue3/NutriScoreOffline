@@ -3,9 +3,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:go_router/go_router.dart';
-
+import '../../app/di.dart';
+import '../../core/widgets/weight_trend_chart.dart';
+import '../../domain/models.dart'; // para WeightLogModel
 import '../../core/theme.dart' show AppColors; // usa as variáveis do theme.dart
-// REMOVIDO: import '../../data/weight_api.dart';
 
 class WeightProgressScreen extends StatefulWidget {
   const WeightProgressScreen({super.key});
@@ -73,46 +74,6 @@ class _WeightProgressScreenState extends State<WeightProgressScreen> {
     _fetch();
   }
 
-  /// ===== MOCK: gera pontos sintéticos e “believable” para UI =====
-  List<_Point> _generateMockPoints({
-    required DateTime from,
-    required DateTime to,
-  }) {
-    // Semente estável por range+dia (para refrescar sem saltos loucos)
-    final seed = from.millisecondsSinceEpoch ~/ (24 * 3600 * 1000) +
-        to.millisecondsSinceEpoch ~/ (24 * 3600 * 1000) +
-        _range.index * 97;
-    final rng = math.Random(seed);
-
-    // Peso base “realista”
-    final base = 78.0 + rng.nextDouble() * 8.0; // 78–86 kg
-
-    // Tendência global (perder/ganhar ligeiro ao longo do período)
-    final totalDays = to.difference(from).inDays.clamp(1, 9999);
-    final trendPerDay = (rng.nextBool() ? -1 : 1) * (0.10 / 7.0) / 2.0; // ~±0.05 kg/sem
-    // Pequena sazonalidade sinusoidal + ruído branco
-    List<_Point> pts = [];
-    for (int i = 0; i <= totalDays; i += math.max(1, totalDays ~/ 45)) {
-      final date = DateTime(from.year, from.month, from.day).add(Duration(days: i));
-      final t = i.toDouble();
-      final seasonal = math.sin(t / 9.0) * 0.25; // ±250 g
-      final noise = (rng.nextDouble() - 0.5) * 0.3; // ±150 g
-      final kg = base + t * trendPerDay + seasonal + noise;
-      pts.add(_Point(date, double.parse(kg.toStringAsFixed(1))));
-    }
-
-    // Garante pelo menos 2 pontos (início/fim)
-    if (pts.length < 2) {
-      pts = [
-        _Point(from, double.parse(base.toStringAsFixed(1))),
-        _Point(to, double.parse((base + totalDays * trendPerDay).toStringAsFixed(1))),
-      ];
-    }
-
-    pts.sort((a, b) => a.d.compareTo(b.d));
-    return pts;
-  }
-
   Future<void> _fetch() async {
     setState(() {
       _loading = true;
@@ -120,31 +81,39 @@ class _WeightProgressScreenState extends State<WeightProgressScreen> {
     });
 
     try {
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
+      final u = await di.userRepo.currentUser();
+      if (u == null) {
+        throw Exception('Sem sessão local.');
+      }
+
+      final now = DateTime.now().toUtc();
+      final today = DateTime.utc(now.year, now.month, now.day);
       final from = today.subtract(Duration(days: _range.days));
 
-      // MOCK em vez de WeightApi.I.getRange(...)
-      final pts = _generateMockPoints(from: from, to: today);
+      final list = await di.weightRepo.getRange(u.id, from, today);
 
-      _points = pts;
+      // mapear para pontos da UI
+      _points = list.map((e) {
+        final d = DateTime.parse('${e.dayIso}T00:00:00Z');
+        return _Point(d, e.kg);
+      }).toList()..sort((a, b) => a.d.compareTo(b.d));
+
       _from = from;
       _to = today;
-      _count = pts.length;
+      _count = _points.length;
 
-      if (pts.isNotEmpty) {
-        _latest = pts.last.kg;
-        _start = pts.first.kg;
-        _deltaKg = (_latest! - _start!);
+      if (_points.isNotEmpty) {
+        _latest = _points.last.kg;
+        _start = _points.first.kg;
+        _deltaKg = _latest! - _start!;
         _deltaPct = _start == 0 ? 0 : (_deltaKg! / _start!) * 100;
-
         final days = (_to!.difference(_from!).inDays).clamp(1, 99999);
         _perWeek = _deltaKg! / days * 7;
       } else {
         _latest = _start = _deltaKg = _deltaPct = _perWeek = null;
       }
     } catch (e) {
-      _error = 'Não foi possível gerar o histórico (mock).';
+      _error = 'Falha ao carregar o histórico: $e';
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -194,12 +163,37 @@ class _WeightProgressScreenState extends State<WeightProgressScreen> {
             const SizedBox(height: 16),
 
             // ===== Card do gráfico (maior) =====
-            _ChartCard(
-              loading: _loading,
-              error: _error,
-              points: _points,
-              height: 320,
-            ),
+            if (_loading)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 32),
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else if (_error != null)
+              Card(
+                color: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              )
+            else
+              WeightTrendCard(
+                points: _points
+                    .map((p) => WeightPoint(date: p.d, weightKg: p.kg))
+                    .toList(),
+                height: 320,
+                collapseSameDay: false,
+              ),
             const SizedBox(height: 16),
 
             // ===== Métricas resumidas =====
@@ -298,26 +292,26 @@ class _ChartCard extends StatelessWidget {
           child: loading
               ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
               : (error != null)
-                  ? Center(
-                      child: Text(
-                        error!,
-                        style: TextStyle(
-                          color: cs.onSurface.withValues(alpha: .7),
-                          fontSize: 13,
-                        ),
-                      ),
-                    )
-                  : (points.isEmpty
-                      ? Center(
-                          child: Text(
-                            'Sem registos ainda',
-                            style: TextStyle(
-                              color: cs.onSurface.withValues(alpha: .7),
-                              fontSize: 13,
-                            ),
+              ? Center(
+                  child: Text(
+                    error!,
+                    style: TextStyle(
+                      color: cs.onSurface.withValues(alpha: .7),
+                      fontSize: 13,
+                    ),
+                  ),
+                )
+              : (points.isEmpty
+                    ? Center(
+                        child: Text(
+                          'Sem registos ainda',
+                          style: TextStyle(
+                            color: cs.onSurface.withValues(alpha: .7),
+                            fontSize: 13,
                           ),
-                        )
-                      : _LineChart(points: points)),
+                        ),
+                      )
+                    : _LineChart(points: points)),
         ),
       ),
     );
@@ -332,10 +326,14 @@ class _LineChart extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    final minY =
-        points.map((e) => e.kg).reduce((a, b) => a < b ? a : b).toDouble();
-    final maxY =
-        points.map((e) => e.kg).reduce((a, b) => a > b ? a : b).toDouble();
+    final minY = points
+        .map((e) => e.kg)
+        .reduce((a, b) => a < b ? a : b)
+        .toDouble();
+    final maxY = points
+        .map((e) => e.kg)
+        .reduce((a, b) => a > b ? a : b)
+        .toDouble();
     final margin = ((maxY - minY).abs() * 0.06).clamp(0.6, 2.0);
 
     return LineChart(
@@ -495,7 +493,7 @@ class _StatsGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final rangeStr = (from != null && to != null)
         ? '${from!.day.toString().padLeft(2, '0')}/${from!.month.toString().padLeft(2, '0')} – '
-            '${to!.day.toString().padLeft(2, '0')}/${to!.month.toString().padLeft(2, '0')}'
+              '${to!.day.toString().padLeft(2, '0')}/${to!.month.toString().padLeft(2, '0')}'
         : '';
 
     return Column(

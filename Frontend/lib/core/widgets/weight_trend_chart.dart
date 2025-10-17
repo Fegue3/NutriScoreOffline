@@ -8,9 +8,9 @@ class WeightPoint {
   const WeightPoint({required this.date, required this.weightKg});
 }
 
-/// Card de UI PURA (sem fetch, sem estado):
-/// - Recebe os pontos por parâmetro e apenas renderiza o gráfico.
-/// - Mantém estilos via Theme (usa o ColorScheme do theme.dart).
+/// Card de UI PURA:
+/// - Se existirem múltiplos registos no mesmo dia, por defeito colapsa para o
+///   **último do dia** (consistente com o backend). Pode desligar via flag.
 class WeightTrendCard extends StatelessWidget {
   const WeightTrendCard({
     super.key,
@@ -18,20 +18,24 @@ class WeightTrendCard extends StatelessWidget {
     this.title = 'Evolução do peso',
     this.showLegend = true,
     this.height = 240,
+    this.collapseSameDay = true, // <— NOVO
   });
 
-  /// Série temporal já ordenada (ou não — o widget ordena por ti).
   final List<WeightPoint> points;
   final String title;
   final bool showLegend;
   final double height;
+  final bool collapseSameDay; // <— NOVO
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    // cópia ordenada por data, para garantir consistência visual
-    final data = [...points]..sort((a, b) => a.date.compareTo(b.date));
+    // 1) ordena por data/hora
+    final sorted = [...points]..sort((a, b) => a.date.compareTo(b.date));
+
+    // 2) (opcional) colapsa para “último do dia”
+    final data = collapseSameDay ? _collapseLastOfDay(sorted) : sorted;
 
     return Card(
       elevation: 0,
@@ -44,7 +48,6 @@ class WeightTrendCard extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // Header
             Row(
               children: [
                 Text(
@@ -91,20 +94,32 @@ class WeightTrendCard extends StatelessWidget {
       ),
     );
   }
+
+  /// Agrupa por YYYY-MM-DD e devolve o **último** ponto desse dia (por hora).
+  List<WeightPoint> _collapseLastOfDay(List<WeightPoint> pts) {
+    final byDay = <String, WeightPoint>{};
+    for (final p in pts) {
+      final isoDay =
+          '${p.date.toUtc().year.toString().padLeft(4, '0')}-'
+          '${p.date.toUtc().month.toString().padLeft(2, '0')}-'
+          '${p.date.toUtc().day.toString().padLeft(2, '0')}';
+      // como está ordenado crescente, cada overwrite mantém o "último" do dia
+      byDay[isoDay] = p;
+    }
+    final keys = byDay.keys.toList()..sort(); // YYYY-MM-DD ordena lexicograficamente
+    return [for (final k in keys) byDay[k]!];
+  }
 }
 
 class _Chart extends StatelessWidget {
   const _Chart({required this.points, required this.cs});
-
   final List<WeightPoint> points;
   final ColorScheme cs;
 
   @override
   Widget build(BuildContext context) {
-    final minY =
-        points.map((e) => e.weightKg).reduce((a, b) => a < b ? a : b);
-    final maxY =
-        points.map((e) => e.weightKg).reduce((a, b) => a > b ? a : b);
+    final minY = points.map((e) => e.weightKg).reduce((a, b) => a < b ? a : b);
+    final maxY = points.map((e) => e.weightKg).reduce((a, b) => a > b ? a : b);
     final margin = ((maxY - minY).abs() * 0.06).clamp(0.6, 2.0);
 
     return LineChart(
@@ -114,15 +129,12 @@ class _Chart extends StatelessWidget {
         gridData: FlGridData(
           show: true,
           drawVerticalLine: false,
-          getDrawingHorizontalLine: (value) => FlLine(
-            color: cs.outline.withValues(alpha: .22),
-            strokeWidth: 1,
-          ),
+          getDrawingHorizontalLine: (value) =>
+              FlLine(color: cs.outline.withValues(alpha: .22), strokeWidth: 1),
         ),
         titlesData: FlTitlesData(
           topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           leftTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
@@ -165,8 +177,7 @@ class _Chart extends StatelessWidget {
           handleBuiltInTouches: true,
           touchTooltipData: LineTouchTooltipData(
             tooltipRoundedRadius: 12,
-            tooltipPadding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            tooltipPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             tooltipBgColor: cs.surface,
             getTooltipItems: (ts) => ts.map((spot) {
               final i = spot.x.toInt();
@@ -175,11 +186,7 @@ class _Chart extends StatelessWidget {
                   '${p.date.day.toString().padLeft(2, '0')}/${p.date.month.toString().padLeft(2, '0')}/${p.date.year}';
               return LineTooltipItem(
                 '$date\n${p.weightKg.toStringAsFixed(1)} kg',
-                TextStyle(
-                  color: cs.onSurface,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                ),
+                TextStyle(color: cs.onSurface, fontWeight: FontWeight.w700, fontSize: 12),
               );
             }).toList(),
           ),
@@ -202,10 +209,7 @@ class _Chart extends StatelessWidget {
             belowBarData: BarAreaData(
               show: true,
               gradient: LinearGradient(
-                colors: [
-                  cs.primary.withValues(alpha: .25),
-                  cs.primary.withValues(alpha: .05),
-                ],
+                colors: [cs.primary.withValues(alpha: .25), cs.primary.withValues(alpha: .05)],
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
               ),

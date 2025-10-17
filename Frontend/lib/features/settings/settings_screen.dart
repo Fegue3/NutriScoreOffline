@@ -13,13 +13,9 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _loading = true;
 
-  // Perfil (UI-only placeholders)
+  // Perfil
   String? _name;
   String? _email;
-
-  // Preferências locais (demo)
-  bool _notifMeals = true;
-  bool _notifSmart = false;
 
   @override
   void initState() {
@@ -38,66 +34,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // =====================================================================
-  // Ações (UI-only / demo)
+  // Ações
   // =====================================================================
-
-  Future<void> _showExportActions() async {
-    final cs = Theme.of(context).colorScheme;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Exportar dados (PDF)',
-                style: Theme.of(ctx).textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 12),
-              ListTile(
-                leading: Icon(Icons.download_rounded, color: cs.primary),
-                title: const Text('Guardar ficheiro…'),
-                subtitle: const Text('Escolher pasta (ex.: Downloads)'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await Future.delayed(const Duration(milliseconds: 400));
-                  if (!mounted) return;
-                  _toastOk('PDF guardado (demo)');
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.ios_share_rounded, color: cs.primary),
-                title: const Text('Partilhar…'),
-                subtitle: const Text('Enviar por WhatsApp, Email, etc.'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await Future.delayed(const Duration(milliseconds: 400));
-                  if (!mounted) return;
-                  _toastOk('Folha de partilha aberta (demo)');
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _clearLocalCache() async {
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    if (!mounted) return;
-    _toastOk('Cache limpa (demo).');
-  }
-
-  Future<void> _openPrivacyPolicy() async {
-    _toastOk('Abrir política de privacidade (demo).');
-  }
 
   void _toastOk(String msg) {
     final cs = Theme.of(context).colorScheme;
@@ -189,10 +127,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _toastErr('Peso inválido.');
         return;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      if (!mounted) return;
-      _toastOk('Peso atualizado (demo)');
-      await _bootstrap();
+
+      try {
+        final u = await di.userRepo.currentUser();
+        if (u == null) throw 'Sem sessão local.';
+
+        // 1) cria log do dia corrente (UTC 00:00)
+        final now = DateTime.now().toUtc();
+        final day = DateTime.utc(now.year, now.month, now.day);
+        await di.weightRepo.addLog(u.id, day, kg, note: 'settings');
+
+        // 2) (opcional) atualiza currentWeightKg em UserGoals se existir
+        try {
+          await di.db.customStatement(
+            'UPDATE UserGoals SET currentWeightKg=?, updatedAt=datetime(\'now\') WHERE userId=?;',
+            [kg, u.id],
+          );
+        } catch (_) {/* silencioso */ }
+
+        if (!mounted) return;
+        _toastOk('Peso atualizado.');
+        await _bootstrap();
+      } catch (e) {
+        if (!mounted) return;
+        _toastErr('Falha ao atualizar: $e');
+      }
     }
   }
 
@@ -220,11 +179,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (ok == true) {
       try {
-        // chama o repositório offline
         await di.userRepo.deleteAccount();
         if (!mounted) return;
         _toastOk('Conta apagada.');
-        // regressa ao hub de autenticação
         GoRouter.of(context).go('/');
       } catch (e) {
         _toastErr('Falha ao apagar conta: $e');
@@ -288,33 +245,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                   const SizedBox(height: 24),
 
-                  // ===== NOTIFICAÇÕES =====
-                  const _SectionHeader('Notificações (demo)'),
-                  _Card(
-                    child: Column(
-                      children: [
-                        _SwitchTile(
-                          icon: Icons.restaurant_outlined,
-                          iconBg: AppColors.freshGreen.withAlpha(24),
-                          title: 'Lembretes de refeições',
-                          value: _notifMeals,
-                          onChanged: (v) => setState(() => _notifMeals = v),
-                        ),
-                        _DividerSoft(),
-                        _SwitchTile(
-                          icon: Icons.alarm_outlined,
-                          iconBg: AppColors.freshGreen.withAlpha(24),
-                          title: 'Lembretes inteligentes',
-                          subtitle: 'Sugestões com base no teu padrão diário.',
-                          value: _notifSmart,
-                          onChanged: (v) => setState(() => _notifSmart = v),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
                   // ===== DIETA & OBJETIVOS =====
                   const _SectionHeader('Dieta & Objetivos'),
                   _Card(
@@ -334,40 +264,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           iconColor: AppColors.freshGreen,
                           title: 'Ver progresso de nutrição',
                           onTap: () => context.push('/weight'),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // ===== DADOS & PRIVACIDADE =====
-                  const _SectionHeader('Dados & Privacidade'),
-                  _Card(
-                    child: Column(
-                      children: [
-                        _Tile(
-                          icon: Icons.download_outlined,
-                          iconBg: AppColors.freshGreen.withAlpha(24),
-                          iconColor: AppColors.freshGreen,
-                          title: 'Exportar dados (PDF)',
-                          onTap: _showExportActions,
-                        ),
-                        _DividerSoft(),
-                        _Tile(
-                          icon: Icons.cleaning_services_outlined,
-                          iconBg: AppColors.freshGreen.withAlpha(24),
-                          iconColor: AppColors.freshGreen,
-                          title: 'Limpar cache local',
-                          onTap: _clearLocalCache,
-                        ),
-                        _DividerSoft(),
-                        _Tile(
-                          icon: Icons.privacy_tip_outlined,
-                          iconBg: AppColors.freshGreen.withAlpha(24),
-                          iconColor: AppColors.freshGreen,
-                          title: 'Política de privacidade',
-                          onTap: _openPrivacyPolicy,
                         ),
                       ],
                     ),
@@ -708,64 +604,6 @@ class _DangerDivider extends StatelessWidget {
       height: 12,
       thickness: 1,
       color: AppColors.ripeRed.withValues(alpha: 0.25),
-    );
-  }
-}
-
-class _SwitchTile extends StatelessWidget {
-  final IconData icon;
-  final Color iconBg;
-  final String title;
-  final String? subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  const _SwitchTile({
-    required this.icon,
-    required this.iconBg,
-    required this.title,
-    this.subtitle,
-    required this.value,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final tt = Theme.of(context).textTheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
-            alignment: Alignment.center,
-            child: Icon(icon, size: 20, color: AppColors.freshGreen),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: tt.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
-                ),
-                if (subtitle != null && subtitle!.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      subtitle!,
-                      style: tt.bodyMedium?.copyWith(color: AppColors.coolGray),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Switch(value: value, onChanged: onChanged),
-        ],
-      ),
     );
   }
 }

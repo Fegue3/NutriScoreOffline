@@ -8,7 +8,6 @@ import '../data/local/meals_repo_sqlite.dart';
 import '../data/local/stats_repo_sqlite.dart';
 import '../data/local/weight_repo_sqlite.dart';
 import '../data/local/goals_repo_sqlite.dart';
-import '../domain/repos.dart' show GoalsRepo;
 
 final di = _DI();
 

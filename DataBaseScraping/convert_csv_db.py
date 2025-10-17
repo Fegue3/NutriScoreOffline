@@ -1,20 +1,79 @@
-import sqlite3, pandas as pd
+import sqlite3
+import pandas as pd
+import uuid
 
-df = pd.read_csv("products_clean.csv")
+SRC_CSV = "products_clean.csv"
+DB_PATH = "catalog.db"
+SCHEMA_SQL = "offline_schema.sql"
 
-con = sqlite3.connect("catalog.db")
+df = pd.read_csv(SRC_CSV, encoding="utf-8", low_memory=False)
+
+con = sqlite3.connect(DB_PATH)
 cur = con.cursor()
-
-# aplica o teu schema
-with open("offline_schema.sql", "r") as f:
+with open(SCHEMA_SQL, "r", encoding="utf-8") as f:
     cur.executescript(f.read())
 
-# insere apenas nas colunas da Product
-df.to_sql("Product", con, if_exists="append", index=False)
+rename_map = {
+    "product_name": "name",
+    "brands": "brand",
+    "categories": "categories",
+    "quantity": "quantity",
+    "nutriscore_score": "nutriScoreScore",
+    "nova_group": "novaGroup",
+    "energy-kcal_100g": "energyKcal_100g",
+    "proteins_100g": "proteins_100g",
+    "carbohydrates_100g": "carbs_100g",
+    "sugars_100g": "sugars_100g",
+    "fat_100g": "fat_100g",
+    "saturated-fat_100g": "satFat_100g",
+    "fiber_100g": "fiber_100g",
+    "salt_100g": "salt_100g",
+    "sodium_100g": "sodium_100g",
+    "countries_tags": "countries",
+}
+cols_present = [c for c in rename_map.keys() if c in df.columns]
+df_m = df[cols_present].rename(columns=rename_map)
 
-# meta info
-cur.execute("CREATE TABLE IF NOT EXISTS AppMeta (bundleVersion TEXT, schemaVersion INTEGER, rowCount INTEGER)")
-cur.execute("INSERT INTO AppMeta VALUES (?, ?, ?)", ("pt-2025-10", 1, len(df)))
+df_m["barcode"] = df["code"].astype(str).str.strip()
+if "name" not in df_m.columns:
+    df_m["name"] = df["product_name"].astype(str).str.strip()
+df_m["id"] = [str(uuid.uuid4()) for _ in range(len(df_m))]
 
+valid = {"A", "B", "C", "D", "E"}
+def norm_grade(x):
+    if pd.isna(x): return None
+    s = str(x).strip().upper()
+    return s[0] if s and s[0] in valid else None
+
+if "nutriscore_grade" in df.columns:
+    df_m["nutriScore"] = df["nutriscore_grade"].map(norm_grade)
+else:
+    df_m["nutriScore"] = None
+
+num_cols = [
+    "nutriScoreScore", "novaGroup", "energyKcal_100g", "proteins_100g",
+    "carbs_100g", "sugars_100g", "fat_100g", "satFat_100g",
+    "fiber_100g", "salt_100g", "sodium_100g"
+]
+for c in num_cols:
+    if c in df_m.columns:
+        df_m[c] = pd.to_numeric(df_m[c], errors="coerce")
+
+df_m = df_m[(df_m["barcode"].notna()) & (df_m["barcode"] != "")
+            & (df_m["name"].notna()) & (df_m["name"] != "")]
+df_m = df_m.drop_duplicates(subset=["barcode"], keep="first")
+
+product_cols = [
+    "id", "barcode", "name", "brand", "quantity", "countries",
+    "nutriScore", "nutriScoreScore", "novaGroup",
+    "categories", "energyKcal_100g", "proteins_100g", "carbs_100g",
+    "sugars_100g", "fat_100g", "satFat_100g", "fiber_100g",
+    "salt_100g", "sodium_100g"
+]
+df_m = df_m[[c for c in product_cols if c in df_m.columns]]
+
+df_m.to_sql("Product", con, if_exists="append", index=False)
 con.commit()
 con.close()
+
+print(f"✅ Inseridos {df_m.shape[0]:,} produtos em {DB_PATH}.")

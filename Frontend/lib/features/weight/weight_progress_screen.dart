@@ -1,11 +1,9 @@
 // lib/features/weight/weight_progress_screen.dart
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:go_router/go_router.dart';
 import '../../app/di.dart';
 import '../../core/widgets/weight_trend_chart.dart';
-import '../../domain/models.dart'; // para WeightLogModel
 import '../../core/theme.dart' show AppColors; // usa as variáveis do theme.dart
 
 class WeightProgressScreen extends StatefulWidget {

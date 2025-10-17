@@ -291,6 +291,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                         (widget.barcode ?? '').isEmpty) {
                                       return;
                                     }
+                                    
                                     setState(() => _favoritedBusy = true);
                                     final nowFav = await di.favoritesRepo
                                         .toggle(user.id, widget.barcode!);

@@ -5,7 +5,11 @@ import 'package:flutter/material.dart';
 import '../../app/di.dart';
 import '../../core/theme.dart' show AppColors;
 
-/// NutriScore – NutritionStatsScreen
+/// NutriScore – NutritionStatsScreen (UI sem chamadas diretas a backend)
+/// - Pie de calorias por refeição (CustomPaint)
+/// - Cartão de macros com progress bars
+/// - Usa repos de DI para metas e estatísticas
+
 class NutritionStatsScreen extends StatefulWidget {
   const NutritionStatsScreen({super.key});
   @override
@@ -21,12 +25,12 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
   double carbTargetG = 0;
   double fatTargetG = 0;
 
-  // Limites “saúde pública”
+  // Limites “saúde pública” (mantém defaults caso não tenhas outros)
   double sugarsTargetG = 50;
   double fiberTargetG = 30;
   double saltTargetG = 5;
 
-  // ===== Dados do dia
+  // ===== Dados do dia (vindos de stats/meals)
   Map<MealSlot, double> _kcalByMeal = const {
     MealSlot.breakfast: 0,
     MealSlot.lunch: 0,
@@ -92,6 +96,7 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
         proteinTargetG = (kcalTarget * protPct / 100.0) / 4.0;
         fatTargetG = (kcalTarget * fatPct / 100.0) / 9.0;
       } else {
+        // se não houver dailyCalories ainda, zera os alvos de macros
         carbTargetG = 0;
         proteinTargetG = 0;
         fatTargetG = 0;
@@ -177,10 +182,10 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
                       icon: const Icon(Icons.chevron_left_rounded),
                       style: ButtonStyle(
                         backgroundColor:
-                            const MaterialStatePropertyAll<Color>(Colors.white),
+                            const WidgetStatePropertyAll<Color>(Colors.white),
                         foregroundColor:
-                            MaterialStatePropertyAll<Color>(cs.primary),
-                        elevation: const MaterialStatePropertyAll<double>(0),
+                            WidgetStatePropertyAll<Color>(cs.primary),
+                        elevation: const WidgetStatePropertyAll<double>(0),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -212,10 +217,10 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
                       icon: const Icon(Icons.chevron_right_rounded),
                       style: ButtonStyle(
                         backgroundColor:
-                            const MaterialStatePropertyAll<Color>(Colors.white),
+                            const WidgetStatePropertyAll<Color>(Colors.white),
                         foregroundColor:
-                            MaterialStatePropertyAll<Color>(cs.primary),
-                        elevation: const MaterialStatePropertyAll<double>(0),
+                            WidgetStatePropertyAll<Color>(cs.primary),
+                        elevation: const WidgetStatePropertyAll<double>(0),
                       ),
                     ),
                   ],
@@ -545,7 +550,7 @@ class _PiePainter extends CustomPainter {
   }
 }
 
-/* ============================ CARD DE MACROS (1 por linha) ============================ */
+/* ============================ CARD DE MACROS ============================ */
 
 class _MacroSectionCard extends StatelessWidget {
   final int kcalUsed;
@@ -658,70 +663,90 @@ class _MacroSectionCard extends StatelessWidget {
       ),
       padding: const EdgeInsets.all(16),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Cabeçalho calorias (sem overflow)
-          Text('Calorias', style: tt.titleMedium),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          // Cabeçalho calorias
+          Row(
             children: [
-              _chip('$kcalUsed kcal usados', AppColors.freshGreen, Colors.white),
-              _chip('meta $kcalTarget kcal',
-                  Theme.of(context).colorScheme.surfaceContainerHighest,
-                  cs.onSurface),
+              Expanded(child: Text('Calorias', style: tt.titleMedium)),
+              _chip('$kcalUsed kcal usados', AppColors.freshGreen,
+                  Colors.white),
+              const SizedBox(width: 8),
+              _chip(
+                'meta $kcalTarget kcal',
+                Theme.of(context).colorScheme.surfaceContainerHighest,
+                cs.onSurface,
+              ),
             ],
           ),
           const SizedBox(height: 16),
 
-          // 1 por linha
-          meter(
-            title: 'Proteína',
-            value: proteinG,
-            target: proteinTargetG,
-            color: AppColors.leafyGreen,
+          // Macros principais
+          Row(
+            children: [
+              Expanded(
+                child: meter(
+                  title: 'Proteína',
+                  value: proteinG,
+                  target: proteinTargetG,
+                  color: AppColors.leafyGreen,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: meter(
+                  title: 'Hidratos',
+                  value: carbG,
+                  target: carbTargetG,
+                  color: AppColors.warmTangerine,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: meter(
+                  title: 'Gordura',
+                  value: fatG,
+                  target: fatTargetG,
+                  color: AppColors.goldenAmber,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 14),
 
-          meter(
-            title: 'Hidratos',
-            value: carbG,
-            target: carbTargetG,
-            color: AppColors.warmTangerine,
-          ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 20),
+          Divider(color: cs.outlineVariant),
+          const SizedBox(height: 12),
 
-          meter(
-            title: 'Gordura',
-            value: fatG,
-            target: fatTargetG,
-            color: AppColors.goldenAmber,
-          ),
-          const SizedBox(height: 14),
-
-          meter(
-            title: 'Açúcares',
-            value: sugarsG,
-            target: sugarsTargetG == 0 ? 1 : sugarsTargetG,
-            color: AppColors.goldenAmber,
-          ),
-          const SizedBox(height: 14),
-
-          meter(
-            title: 'Fibra',
-            value: fiberG,
-            target: fiberTargetG == 0 ? 1 : fiberTargetG,
-            color: AppColors.leafyGreen,
-          ),
-          const SizedBox(height: 14),
-
-          meter(
-            title: 'Sal',
-            value: saltG,
-            target: saltTargetG == 0 ? 1 : saltTargetG,
-            unit: 'g',
-            color: AppColors.warmTangerine,
+          // Outros nutrientes
+          Row(
+            children: [
+              Expanded(
+                child: meter(
+                  title: 'Açúcares',
+                  value: sugarsG,
+                  target: sugarsTargetG == 0 ? 1 : sugarsTargetG,
+                  color: AppColors.goldenAmber,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: meter(
+                  title: 'Fibra',
+                  value: fiberG,
+                  target: fiberTargetG == 0 ? 1 : fiberTargetG,
+                  color: AppColors.leafyGreen,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: meter(
+                  title: 'Sal',
+                  value: saltG,
+                  target: saltTargetG == 0 ? 1 : saltTargetG,
+                  unit: 'g',
+                  color: AppColors.warmTangerine,
+                ),
+              ),
+            ],
           ),
         ],
       ),

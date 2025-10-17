@@ -76,6 +76,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       }
 
       // 3) navegar para o detalhe com dados reais (base = 100 g)
+      if (!mounted) return; // garante que o State ainda existe
       await context.pushNamed(
         'productDetail',
         extra: {

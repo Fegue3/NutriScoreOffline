@@ -207,8 +207,6 @@ GoRouter buildAppRouter() {
             fiberGPerBase: asDouble(m['fiberGPerBase']),
             sodiumGPerBase: asDouble(m['sodiumGPerBase']),
             nutriScore: m['nutriScore']?.toString(),
-
-            // 👇 finalmente passamos para o ecrã
             initialMeal: meal,
             date: date,
 

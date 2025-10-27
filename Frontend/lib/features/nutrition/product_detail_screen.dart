@@ -129,7 +129,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }();
     _syncFavoriteInitial();
   }
-
+  
   Future<void> _syncFavoriteInitial() async {
     final barcode = widget.barcode ?? '';
     if (barcode.isEmpty) return;

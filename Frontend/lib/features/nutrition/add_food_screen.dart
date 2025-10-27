@@ -181,6 +181,7 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
       extra: {
         'barcode': barcode,
         'name': p?.name,
+        'brand': p?.brand,
         'baseQuantityLabel': '100 g',
         'kcalPerBase': p?.energyKcal100g,
         'proteinGPerBase': p?.protein100g,

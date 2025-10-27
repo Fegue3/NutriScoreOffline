@@ -663,13 +663,14 @@ class _MacroSectionCard extends StatelessWidget {
       ),
       padding: const EdgeInsets.all(16),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Cabeçalho calorias
+          // ===== Cabeçalho calorias em LINHAS =====
+          Text('Calorias', style: tt.titleMedium),
+          const SizedBox(height: 8),
           Row(
             children: [
-              Expanded(child: Text('Calorias', style: tt.titleMedium)),
-              _chip('$kcalUsed kcal usados', AppColors.freshGreen,
-                  Colors.white),
+              _chip('$kcalUsed kcal usados', AppColors.freshGreen, Colors.white),
               const SizedBox(width: 8),
               _chip(
                 'meta $kcalTarget kcal',
@@ -678,75 +679,56 @@ class _MacroSectionCard extends StatelessWidget {
               ),
             ],
           ),
+
           const SizedBox(height: 16),
 
-          // Macros principais
-          Row(
-            children: [
-              Expanded(
-                child: meter(
-                  title: 'Proteína',
-                  value: proteinG,
-                  target: proteinTargetG,
-                  color: AppColors.leafyGreen,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: meter(
-                  title: 'Hidratos',
-                  value: carbG,
-                  target: carbTargetG,
-                  color: AppColors.warmTangerine,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: meter(
-                  title: 'Gordura',
-                  value: fatG,
-                  target: fatTargetG,
-                  color: AppColors.goldenAmber,
-                ),
-              ),
-            ],
+          // ===== Macros principais — cada um numa linha =====
+          meter(
+            title: 'Proteína',
+            value: proteinG,
+            target: proteinTargetG,
+            color: AppColors.leafyGreen,
+          ),
+          const SizedBox(height: 12),
+          meter(
+            title: 'Hidratos',
+            value: carbG,
+            target: carbTargetG,
+            color: AppColors.warmTangerine,
+          ),
+          const SizedBox(height: 12),
+          meter(
+            title: 'Gordura',
+            value: fatG,
+            target: fatTargetG,
+            color: AppColors.goldenAmber,
           ),
 
           const SizedBox(height: 20),
           Divider(color: cs.outlineVariant),
           const SizedBox(height: 12),
 
-          // Outros nutrientes
-          Row(
-            children: [
-              Expanded(
-                child: meter(
-                  title: 'Açúcares',
-                  value: sugarsG,
-                  target: sugarsTargetG == 0 ? 1 : sugarsTargetG,
-                  color: AppColors.goldenAmber,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: meter(
-                  title: 'Fibra',
-                  value: fiberG,
-                  target: fiberTargetG == 0 ? 1 : fiberTargetG,
-                  color: AppColors.leafyGreen,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: meter(
-                  title: 'Sal',
-                  value: saltG,
-                  target: saltTargetG == 0 ? 1 : saltTargetG,
-                  unit: 'g',
-                  color: AppColors.warmTangerine,
-                ),
-              ),
-            ],
+          // ===== Outros nutrientes — cada um numa linha =====
+          meter(
+            title: 'Açúcares',
+            value: sugarsG,
+            target: sugarsTargetG == 0 ? 1 : sugarsTargetG,
+            color: AppColors.goldenAmber,
+          ),
+          const SizedBox(height: 12),
+          meter(
+            title: 'Fibra',
+            value: fiberG,
+            target: fiberTargetG == 0 ? 1 : fiberTargetG,
+            color: AppColors.leafyGreen,
+          ),
+          const SizedBox(height: 12),
+          meter(
+            title: 'Sal',
+            value: saltG,
+            target: saltTargetG == 0 ? 1 : saltTargetG,
+            unit: 'g',
+            color: AppColors.warmTangerine,
           ),
         ],
       ),
@@ -756,12 +738,19 @@ class _MacroSectionCard extends StatelessWidget {
   Widget _chip(String text, Color bg, Color fg) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: ShapeDecoration(color: bg, shape: const StadiumBorder()),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontWeight: FontWeight.w800,
-          color: fg,
+      decoration: const ShapeDecoration(
+        shape: StadiumBorder(),
+        color: Colors.transparent,
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: ShapeDecoration(color: bg, shape: const StadiumBorder()),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            color: fg,
+          ),
         ),
       ),
     );

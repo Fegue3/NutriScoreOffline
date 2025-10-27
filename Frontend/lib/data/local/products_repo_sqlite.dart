@@ -31,9 +31,12 @@ class ProductsRepoSqlite implements ProductsRepo {
       energyKcal_100g, proteins_100g, carbs_100g, fat_100g,
       sugars_100g, fiber_100g, salt_100g
     FROM Product
-    WHERE name LIKE ? COLLATE NOCASE
-       OR barcode LIKE ?
-       OR brand LIKE ? COLLATE NOCASE
+    WHERE (brand IS NOT NULL AND TRIM(brand) <> '')
+      AND (
+           name LIKE ? COLLATE NOCASE
+        OR barcode LIKE ?
+        OR brand LIKE ? COLLATE NOCASE
+      )
     ORDER BY
       CASE
         WHEN lower(name) = lower(?)        THEN 0  -- EXACT match
@@ -69,7 +72,7 @@ class ProductsRepoSqlite implements ProductsRepo {
         id: m['id'] as String,
         barcode: m['barcode'] as String,
         name: (m['name'] as String).trim(),
-        brand: (m['brand'] as String?)?.trim(), // << NOVO
+        brand: (m['brand'] as String?)?.trim(),
         energyKcal100g: _toInt(m['energyKcal_100g']),
         protein100g: (m['proteins_100g'] as num?)?.toDouble(),
         carb100g: (m['carbs_100g'] as num?)?.toDouble(),
@@ -88,7 +91,7 @@ class ProductsRepoSqlite implements ProductsRepo {
           '''
   SELECT
     id, barcode, name,
-    brand,                                 -- AQUI
+    brand,
     energyKcal_100g AS energyKcal100g,
     proteins_100g   AS protein100g,
     carbs_100g      AS carb100g,
@@ -110,7 +113,7 @@ class ProductsRepoSqlite implements ProductsRepo {
       id: d['id'] as String,
       barcode: d['barcode'] as String,
       name: d['name'] as String,
-      brand: d['brand'] as String?, // AQUI
+      brand: d['brand'] as String?,
       energyKcal100g: d['energyKcal100g'] as int?,
       protein100g: (d['protein100g'] as num?)?.toDouble(),
       carb100g: (d['carb100g'] as num?)?.toDouble(),
@@ -140,7 +143,8 @@ class ProductsRepoSqlite implements ProductsRepo {
       ..writeln('SELECT id, barcode, name,')
       ..writeln('       energyKcal_100g, proteins_100g, carbs_100g, fat_100g')
       ..writeln('FROM Product')
-      ..writeln('WHERE (name LIKE ? COLLATE NOCASE OR barcode LIKE ?)');
+      ..writeln('WHERE (name LIKE ? COLLATE NOCASE OR barcode LIKE ?)')
+      ..writeln('  AND (brand IS NOT NULL AND TRIM(brand) <> \'\')');
 
     if (countriesFilter != null && countriesFilter.trim().isNotEmpty) {
       buffer.writeln('AND countries LIKE ?');
@@ -153,9 +157,7 @@ class ProductsRepoSqlite implements ProductsRepo {
 
     vars.addAll([Variable.withInt(pageSize), Variable.withInt(offset)]);
 
-    final rows = await db
-        .customSelect(buffer.toString(), variables: vars)
-        .get();
+    final rows = await db.customSelect(buffer.toString(), variables: vars).get();
 
     return rows.map((row) {
       final r = row.data;
@@ -176,12 +178,15 @@ class ProductsRepoSqlite implements ProductsRepo {
     final id = p.id.isEmpty ? const Uuid().v4() : p.id;
     await db.customStatement(
       '''
-      INSERT INTO Product (id, barcode, name,
-                           energyKcal_100g, proteins_100g, carbs_100g, fat_100g, 
-                           sugars_100g, fiber_100g, salt_100g, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      INSERT INTO Product (
+        id, barcode, name, brand,
+        energyKcal_100g, proteins_100g, carbs_100g, fat_100g, 
+        sugars_100g, fiber_100g, salt_100g, updatedAt
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(barcode) DO UPDATE SET
         name=excluded.name,
+        brand=excluded.brand,
         energyKcal_100g=excluded.energyKcal_100g,
         proteins_100g=excluded.proteins_100g,
         carbs_100g=excluded.carbs_100g,
@@ -195,6 +200,7 @@ class ProductsRepoSqlite implements ProductsRepo {
         id,
         p.barcode,
         p.name,
+        p.brand,              // <-- NOVO (guardar brand)
         p.energyKcal100g,
         p.protein100g,
         p.carb100g,

@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-
+import '../../data/online/products_repo_hybrid.dart';
 import '../../app/di.dart' as di;
 import '../../domain/models.dart';
 import '../../core/meal_type.dart'; // <- fonte única do enum + extensions (labelPt, dbValue)
@@ -142,6 +142,7 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
       _loading = query.isNotEmpty;
       _tab = _AddTab.results;
     });
+
     if (query.isEmpty) {
       setState(() {
         _results = const [];
@@ -150,12 +151,35 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
       return;
     }
 
-    final resp = await di.di.productsRepo.searchByName(query, limit: 20);
-    if (!mounted) return;
-    setState(() {
-      _results = resp;
-      _loading = false;
-    });
+    try {
+      // 1) tenta LOCAL primeiro
+      var items = await di.di.productsRepo.searchByName(query, limit: 20);
+
+      // 2) se não houver nada local → só então faz FETCH ONLINE (submit)
+      if (items.isEmpty && di.di.productsRepo is ProductsRepoHybrid) {
+        items = await (di.di.productsRepo as ProductsRepoHybrid)
+            .fetchOnlineAndCache(query, limit: 20);
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _results = items;
+      });
+
+      if (items.isEmpty) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Sem resultados.')));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro na pesquisa: $e')));
+    } finally {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
   }
 
   /* ----------------- NAVIGAÇÃO ----------------- */

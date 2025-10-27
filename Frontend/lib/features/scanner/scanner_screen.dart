@@ -67,6 +67,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
           user.id,
           HistorySnapshot(
             barcode: p.barcode,
+            name: p.name,
+            brand: p.brand,
             calories: p.energyKcal100g,
             proteins: p.protein100g,
             carbs: p.carb100g,
@@ -84,6 +86,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
           'initialMeal': _mealLabelPt,
           'date': _date,
           'name': p.name,
+          'brand': p.brand,
           'baseQuantityLabel': '100 g',
           'kcalPerBase': p.energyKcal100g,
           'proteinGPerBase': p.protein100g,

@@ -120,6 +120,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         user.id,
         HistorySnapshot(
           barcode: barcode,
+          name: _name,
+          brand: _brand,
           calories: _kcalBase,
           proteins: _p,
           carbs: _c,
@@ -127,9 +129,61 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         ),
       );
     }();
+    _loadFromRepoAndLog();
     _syncFavoriteInitial();
   }
-  
+
+  Future<void> _loadFromRepoAndLog() async {
+    final code = widget.barcode?.trim() ?? '';
+    if (code.isEmpty) return;
+
+    // tenta obter o produto (repo híbrido: local -> online)
+    final p = await di.productsRepo.getByBarcode(code);
+
+    if (!mounted) return;
+
+    if (p != null) {
+      setState(() {
+        // preferes o que veio do widget se vier preenchido; senão usa o do produto
+        final wName = widget.name?.trim();
+        final wBrand = widget.brand?.trim();
+
+        _name = (wName != null && wName.isNotEmpty)
+            ? wName
+            : (p.name.trim().isNotEmpty ? p.name : _name);
+        _brand = (wBrand != null && wBrand.isNotEmpty)
+            ? wBrand
+            : ((p.brand ?? '').trim().isNotEmpty ? p.brand : _brand);
+
+        _kcalBase = p.energyKcal100g ?? _kcalBase;
+        _p = p.protein100g ?? _p;
+        _c = p.carb100g ?? _c;
+        _f = p.fat100g ?? _f;
+        _sugar = p.sugars100g ?? _sugar;
+        _fiber = p.fiber100g ?? _fiber;
+        _salt = p.salt100g ?? _salt;
+        // _baseLabel mantém "100 g" por agora
+      });
+    }
+
+    // só depois de teres dados decentes, regista no histórico com name/brand
+    final user = await di.userRepo.currentUser();
+    if (user == null) return;
+
+    await di.historyRepo.addIfNotDuplicate(
+      user.id,
+      HistorySnapshot(
+        barcode: code,
+        name: _name, // <- passa o nome
+        brand: _brand, // <- passa a marca
+        calories: _kcalBase,
+        proteins: _p,
+        carbs: _c,
+        fat: _f,
+      ),
+    );
+  }
+
   Future<void> _syncFavoriteInitial() async {
     final barcode = widget.barcode ?? '';
     if (barcode.isEmpty) return;
@@ -297,7 +351,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                     final nowFav = await di.favoritesRepo
                                         .toggle(user.id, widget.barcode!);
 
-                                    if (!mounted){
+                                    if (!mounted) {
                                       return;
                                     }
                                     setState(() {
@@ -305,7 +359,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                       _favoritedBusy = false;
                                     });
 
-                                    if (!context.mounted){
+                                    if (!context.mounted) {
                                       return; // <- protege o uso do BuildContext
                                     }
                                     ScaffoldMessenger.of(context).showSnackBar(

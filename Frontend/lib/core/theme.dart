@@ -276,7 +276,7 @@ class NutriTheme {
       ),
 
       snackBarTheme: const SnackBarThemeData(
-        backgroundColor: AppColors.ripeRed,
+        backgroundColor: AppColors.freshGreen,
         contentTextStyle: TextStyle(fontFamily: AppText.bodyFamily, color: Colors.white),
         behavior: SnackBarBehavior.floating,
       ),

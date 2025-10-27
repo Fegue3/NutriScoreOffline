@@ -179,10 +179,14 @@ class HistoryEntry {
 /// Payload mínimo para inserir no histórico
 class HistorySnapshot {
   final String barcode;
+  final String? name;    // novo
+  final String? brand;
   final int? calories;
   final double? proteins, carbs, fat;
   const HistorySnapshot({
     required this.barcode,
+    this.name,      
+    this.brand,
     this.calories,
     this.proteins,
     this.carbs,

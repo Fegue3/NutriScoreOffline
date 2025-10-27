@@ -16,7 +16,7 @@ chunk_size = 100_000
 header_written = False
 total_kept = 0
 
-print("🚀 A processar por chunks (QUOTE_NONE) — Portugal + Espanha, sem limite.\n")
+print("A processar por chunks (QUOTE_NONE) — Portugal + Espanha, sem limite.\n")
 
 for i, chunk in enumerate(pd.read_csv(
     SRC,
@@ -51,6 +51,6 @@ for i, chunk in enumerate(pd.read_csv(
         header_written = True
 
     total_kept += len(filtered)
-    print(f"✅ Chunk {i+1}: +{len(filtered)} (total {total_kept})")
+    print(f"Chunk {i+1}: +{len(filtered)} (total {total_kept})")
 
-print(f"\n🎉 Feito! {total_kept} produtos PT/ES gravados em {OUT}")
+print(f"\n Feito! {total_kept} produtos PT/ES gravados em {OUT}")

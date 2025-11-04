@@ -13,53 +13,42 @@ Aplicação móvel **offline** para registo de refeições, análise nutricional
 - **NutriScore (A–E)** com cores (verde→vermelho) e informação simplificada: calorias, açúcares, gorduras, sal.  
 - **Registo de refeições** por tipo (Pequeno-almoço, Almoço, Lanche, Jantar) e cálculo automático de **calorias e macronutrientes**.  
 - **Dashboard diário**: progresso de calorias e macros vs. meta.  
-- **Estatísticas de nutrição** (calorias/macros por dia) e **evolução de peso** (gráfico de tendência).  
+- **Estatísticas** (calorias/macros por dia) e **evolução de peso**.  
 - **Histórico de produtos pesquisados**, favoritos e itens personalizados.  
-- **Autenticação local** (hash em SQLite) e **metas do utilizador** (calorias/percentuais de macros, preferências).
+- **Autenticação local** (hash em SQLite) + **metas** (calorias/percentuais de macros, preferências).
 
 > **Visão:** tornar simples e acessível monitorizar a ingestão calórica e de macronutrientes, ajudando a cumprir objetivos de saúde — **sem depender de internet**.
 
 ---
 
-## 🧱 Arquitetura & Abordagem Offline-First
-
-Todas as operações principais funcionam **sem rede**:
+## 🧱 Abordagem Offline-First (Resumo)
 
 - **SQLite on-device** com esquema otimizado (índices, enums via `CHECK`, triggers em `updatedAt`).  
-- **Pipeline local (Python)** que **converte CSVs** do Open Food Facts para um **ficheiro SQLite** pronto a usar.  
+- **Pipeline local (Python)** que converte CSVs do OFF para **`nutriscore.db`**.  
 - App Flutter lê/escreve diretamente na base local — sem API externa para o fluxo principal.  
-- Sincronização/online pode ser adicionada no futuro **sem quebrar** o núcleo do MVP.
+- Sincronização/online pode ser adicionada depois **sem quebrar** o MVP.
 
-### Fluxo de dados (offline)
-
+**Fluxo (offline):**
 1. **CSV OFF → Python** (`convert_csv_db.py`) limpa/normaliza campos.  
 2. **SQLite** é criado com `offline_schema.sql` e populado.  
-3. A **app Flutter** consulta por **barcode** e por **texto** (com índices em nome, marca, categorias).
+3. A app consulta por **barcode** e por **texto** (com índices em nome/marca/categoria).
 
 ---
 
 ## 🌐 Modo Online (Fallback) — Open Food Facts
 
-Quando um produto **não existe** na base local, a NutriScore faz uma consulta **online** à Open Food Facts e **guarda** o resultado para uso **offline** futuro.
+Quando um produto **não existe** na base local, a NutriScore faz uma consulta **online** à OFF e **guarda** o resultado para uso **offline** futuro.
 
-**Como funciona (em 4 passos):**
-1. **Procura local** pelo código de barras/QR.  
-2. **Se não encontrar**, faz **pedido à OFF** com **rate-limit** para não exceder limites e reduzir consumo de dados.  
-3. **Normaliza os dados** (NutriScore A–E, score numérico, NOVA, macros por 100g/porção, alergénios, categorias, imagem).  
-4. **Guarda** no `nutriscore.db` (incluindo o JSON original em `off_raw`) e apresenta o produto na UI.
+**Pipeline (4 passos):**
+1. Procura local pelo código de barras/QR.  
+2. Se não encontrar, faz pedido à OFF com **rate-limit**.  
+3. Normaliza (NutriScore A–E, score numérico, NOVA, macros 100g/porção, alergénios, categorias, imagem).  
+4. **Upsert** no `nutriscore.db` (inclui JSON original em `off_raw`) e apresenta na UI.
 
-**Boas práticas aplicadas:**
-- **Rate-limit + backoff** automático em erros/429.  
-- **Cache condicional** com **ETag/Last-Modified** (se o servidor suportar), evitando downloads repetidos.  
-- **Privacidade**: não são enviados dados pessoais; apenas o **barcode**.  
-- **User-Agent** identificável: “NutriScore/<versão> (+contacto)”.
+**Boas práticas:** rate-limit + backoff; cache condicional (ETag/Last-Modified); privacidade (envia só o **barcode**); User-Agent “**NutriScore/<versão> (+contacto)**”.
 
-**Estados de UI (resumo):**
-- Sem rede/erro → aviso breve e ação **“Tentar novamente”**.  
-- 404 (não encontrado) → opção **“Adicionar alimento personalizado”**.  
-- Sucesso → dados apresentados e **guardados** para próximo uso offline.
-
-> O online é **apenas** para preencher lacunas. A experiência mantém-se **offline-first**.
+**Estados de UI:**  
+Sem rede/erro → “Tentar novamente” · 404 → “Adicionar alimento personalizado” · Sucesso → guarda e mostra.
 
 ---
 
@@ -73,11 +62,11 @@ NutriScore/
 │  └─ products_clean.csv    # Fonte trabalhada (derivada do OFF)
 └─ Frontend/                # App Flutter
    ├─ lib/
-   │  ├─ core/              # theme.dart, widgets base (ex.: gráficos)
-   │  ├─ domain/            # models.dart, repos interfaces
+   │  ├─ core/              # theme.dart, estilos/shared widgets
+   │  ├─ domain/            # models.dart, entities
    │  ├─ data/              # SQLite (Drift/DAO/queries) + DI
    │  └─ features/
-   │     ├─ nutrition/      # ecrãs: log refeições, estatísticas, add food
+   │     ├─ nutrition/      # log refeições, estatísticas, add food
    │     ├─ home/           # dashboard (progresso diário)
    │     └─ weight/         # gráfico evolução de peso
    └─ assets/
@@ -87,48 +76,111 @@ NutriScore/
 
 ## 🎨 Design System (NutriScore)
 
-**Paleta:** Fresh Green (#4CAF6D), Warm Tangerine (#FF8A4C), Leafy Green (#66BB6A), Golden Amber (#FFC107), Ripe Red (#E53935); neutros: Charcoal #333, Cool Gray #666, Soft Off-White #FAFAF7, Light Sage #E8F5E9.  
-**Tipografia:** **Nunito Sans** (títulos), **Inter** (texto), **Roboto Mono** (números).  
-**Atenção:** **Usa sempre as variáveis em `theme.dart`** para cores, tipografia e espaçamentos.
+> **Usa sempre as variáveis do `theme.dart`** (cores, tipografia e spacing) — não colocar hex diretamente em widgets.
 
-**Regras rápidas:**
+**Paleta**  
+Fresh Green `#4CAF6D` · Warm Tangerine `#FF8A4C` · Leafy Green `#66BB6A` · Golden Amber `#FFC107` · Ripe Red `#E53935`  
+Neutros: Charcoal `#333333` · Cool Gray `#666666` · Soft Off-White `#FAFAF7` · Light Sage `#E8F5E9`
+
+**Tipografia**  
+Títulos → **Nunito Sans** · Corpo → **Inter** · Números/Dados → **Roboto Mono**
+
+**Regras rápidas**  
 - Fresh Green **só** para CTAs principais.  
 - Não misturar acentos (verde + laranja) no mesmo componente.  
-- Manter contraste AA e motion subtil.  
-- Spacing em **múltiplos de 4px** (4pt grid).
+- Manter contraste **WCAG AA** e animações subtis.  
+- Spacing em múltiplos de **4px** (4pt grid).
 
 ---
 
 ## ▶️ Setup & Execução
 
 ### 1) Pré-requisitos
-- **Flutter** (canal stable) instalado; `flutter doctor` OK.  
-- **Python 3.10+** com `pip` (tipicamente `pandas`).
+- **Flutter** (canal stable): `flutter doctor` OK.  
+- **Python 3.10+** com `pip` (p. ex. `pandas`).
 
 ### 2) Construir a base de dados offline
+
+**macOS / Linux (bash)**
 ```bash
 cd DataBaseScraping
 python3 convert_csv_db.py
 ```
-Na execução do script:
+
+**Windows (PowerShell)**
+```powershell
+cd .\DataBaseScrapingpy -3 .\convert_csv_db.py
+# (alternativa, se 'py' não existir)
+python .\convert_csv_db.py
+```
+
+**Windows (CMD)**
+```cmd
+cd DataBaseScraping
+py -3 convert_csv_db.py
+```
+
+O script:
 - Lê `products_clean.csv` (derivado OFF)  
 - Cria **`nutriscore.db`** a partir de **`offline_schema.sql`**  
 - Popula tabelas `Product` e relacionadas
 
-### 3) Correr a aplicação Flutter
+### 3) Correr a aplicação Flutter (debug)
+
+**macOS / Linux (bash)**
 ```bash
 cd ..
 cd Frontend
 flutter pub get
 flutter run
 ```
-> A app procura o ficheiro SQLite local (ver `di.dart`/config). Garante que `nutriscore.db` está acessível (ex.: `assets` com **copy on first run**, ou diretório de dados da app).
+
+**Windows (PowerShell)**
+```powershell
+cd ..
+cd .\Frontendflutter pub get
+flutter run
+```
+
+**Windows (CMD)**
+```cmd
+cd ..
+cd Frontend
+flutter pub get
+flutter run
+```
+
+### 4) Versão final (otimizada)
+
+- **Executar em modo release (device ligado):**
+  ```bash
+  flutter run --release
+  ```
+
+- **Android – gerar APK/AAB:**
+  ```bash
+  # APK por ABI (instalação direta)
+  flutter build apk --release --split-per-abi
+
+  # App Bundle para Play Store
+  flutter build appbundle --release
+  ```
+  *Instalar APK (exemplo arm64):*
+  ```bash
+  adb install -r build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+  ```
+
+- **iOS (macOS + Xcode):**
+  ```bash
+  flutter build ios --release
+  # Depois abrir no Xcode (Runner) e Archive/Distribute (assinatura obrigatória)
+  ```
 
 ---
 
 ## 🗃️ Esquema (SQLite) — Extracto
 
-> Ficheiro: **`offline_schema.sql`** (ver original para o completo)
+> Ficheiro: **`DataBaseScraping/offline_schema.sql`** (ver original para o completo)
 
 ```sql
 PRAGMA foreign_keys = ON;
@@ -207,53 +259,54 @@ CREATE TABLE IF NOT EXISTS WeightLog (
   FOREIGN KEY (userId) REFERENCES User(id) ON DELETE CASCADE
 );
 ```
+
 > O esquema inclui ainda `UserGoals`, `ProductHistory`, `FavoriteProduct`, `CustomFood`, `CustomMeal`, `CustomMealItem`, `MealItem`, `DailyStats` e triggers `updatedAt`.
 
 ---
 
-## 📲 Funcionalidades do Frontend (Flutter)
+## 📲 Funcionalidades de App (Flutter)
 
-- **Scanner de código de barras/QR**: abre a câmara, lê o código e faz *lookup* local por `barcode`.  
-- **Pesquisa por nome/marca/categoria** com índices (`LIKE`, prefixo e início de palavra) para rapidez.  
-- **Detalhe do produto**: mostra NutriScore, NOVA, macros por 100g e por porção, alergénios e rótulos.  
-- **Adicionar aos registos**: seleciona refeição e quantidade (g/ml/unidade) e grava em `Meal`/`MealItem`.  
-- **Dashboard**: progresso de calorias usadas vs. meta diária; distribuição por refeição.  
-- **Estatísticas**: cartões de macros e gráfico da evolução de peso.  
-- **Favoritos & Histórico**: atalhos para itens frequentes; auditoria de scans (`ProductHistory`).  
+- **Scanner de código de barras/QR** → lookup local por `barcode`.  
+- **Pesquisa por nome/marca/categoria** com índices para rapidez.  
+- **Detalhe do produto**: NutriScore, NOVA, macros por 100g/porção, alergénios, rótulos.  
+- **Adicionar aos registos**: seleciona refeição e quantidade (g/ml/unidade), grava em `Meal`/`MealItem`.  
+- **Dashboard**: progresso vs. meta; distribuição por refeição.  
+- **Estatísticas**: cartões de macros e gráfico de peso.  
+- **Favoritos & Histórico**: atalhos para itens frequentes; auditoria de scans.
 
-> **Acessibilidade & UI:** cores e tipografia do **NutriScore Design System**, progress rings/barras animadas, contrastes AA e *motion* subtil. **Não misturar acentos de cor no mesmo componente**; **verdes** reservados a ações primárias.
+> **Acessibilidade & UI:** cores/tipografia do **Design System NutriScore**, progress rings/barras animadas, contrastes AA e *motion* subtil. **Não misturar acentos de cor no mesmo componente**; **verdes** reservados a ações primárias.
 
 ---
 
 ## 🔧 Configuração da BD na App
 
 - Carregar `nutriscore.db` por **asset** (copiar para diretório de dados na 1ª execução) **ou** apontar para um caminho conhecido.  
-- Certificar-se que `PRAGMA foreign_keys = ON` está ativo (definido no schema).  
-- Índices de pesquisa já incluídos no script SQL.
+- Ativar `PRAGMA foreign_keys = ON`.  
+- Índices de pesquisa já incluídos no schema.
 
-### Dica: inspecionar a BD local (Android)
+**Inspecionar BD local (Android)**
 ```bash
 adb shell run-as <package.name> ls databases
 adb shell run-as <package.name> cp databases/nutriscore.db /sdcard/
 adb pull /sdcard/nutriscore.db .
+# Abrir no desktop com DB Browser for SQLite
 ```
-No desktop, abrir com **DB Browser for SQLite**.
 
 ---
 
 ## 🧪 Qualidade & Performance
 
-- Consultas preparadas e índices (`name`, `brand`, `categories`).  
-- Cálculos de macros/calorias no momento do registo; agregados diários em `DailyStats`.  
-- Triggers `updatedAt` para *debug* e futura sincronização.  
-- **Fallback online** com **rate-limit**, **cache condicional** e **upsert** transacional para garantir consistência.
+- Consultas preparadas + índices (`name`, `brand`, `categories`).  
+- Cálculos de macros/calorias no registo; agregados diários em `DailyStats`.  
+- Triggers `updatedAt` para debug e futura sincronização.  
+- Fallback online com rate-limit, cache condicional e upsert transacional.
 
 ---
 
-## 🚀 Roadmap (opcional)
+## 🚀 Roadmap (extra)
 
 - Perfil com preferências (ex.: alerta “muito sal” para hipertensos).  
-- Sugestões de alternativas mais saudáveis por categoria.  
+- Sugestões de alternativas por categoria.  
 - Rankings por categoria (ex.: “melhor iogurte”).  
 - Notificações de lembrete de registo.  
 - Gráficos semanais/mensais.  
@@ -264,30 +317,48 @@ No desktop, abrir com **DB Browser for SQLite**.
 ## 👩‍💻 Contribuir
 
 1. `flutter format .` / `dart analyze`  
-2. PRs com commits pequenos e mensagens claras  
+2. PRs pequenos e mensagens claras  
 3. Issues com *steps to reproduce* e *logs*
 
 ---
 
-## 📜 Licença
+## 📜 Licenças
 
 - Dados **Open Food Facts**: sujeitos à licença do OFF.  
-- Código da app: ver ficheiro `LICENSE` no repositório.
+- Código da app: ver ficheiro `LICENSE` do repositório.
 
 ---
 
 ## 🧭 TL;DR (Setup Rápido)
 
+**macOS / Linux (bash)**
 ```bash
 # 1) Construir BD offline
 cd DataBaseScraping
 python3 convert_csv_db.py
 
-# 2) Correr a app
+# 2) Correr a app (debug)
 cd ..
 cd Frontend
 flutter pub get
 flutter run
+
+# 3) Executar versão final (release)
+flutter run --release
 ```
 
-> Projeto **NutriScore** — manter nomes, cores e tipografia conforme `theme.dart`. Qualquer dúvida, abre uma issue. 💚
+**Windows (PowerShell)**
+```powershell
+# 1) Construir BD offline
+cd .\DataBaseScrapingpy -3 .\convert_csv_db.py
+
+# 2) Correr a app (debug)
+cd ..
+cd .\Frontendflutter pub get
+flutter run
+
+# 3) Executar versão final (release)
+flutter run --release
+```
+
+> Projeto **NutriScore** — manter nomes, cores e tipografia conforme `theme.dart`. 💚

@@ -110,7 +110,7 @@ NutriScore/
 cd DataBaseScraping
 python3 convert_csv_db.py
 ```
-O script:
+Na execução do script:
 - Lê `products_clean.csv` (derivado OFF)  
 - Cria **`nutriscore.db`** a partir de **`offline_schema.sql`**  
 - Popula tabelas `Product` e relacionadas

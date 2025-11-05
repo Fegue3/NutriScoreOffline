@@ -18,6 +18,11 @@ abstract class MealsRepo {
   Future<List<MealWithItems>> getMealsForDay(String userId, DateTime dayUtcCanon);
   Future<void> addOrUpdateMealItem(AddMealItemInput input);
   Future<void> removeMealItem(String mealItemId);
+  Future<void> updateMealItemQuantity(
+    String mealItemId, {
+    required String unit,     // 'GRAM' | 'ML' | 'PIECE'
+    required double quantity, // ex.: 120.0 (g)
+  });
 }
 
 abstract class StatsRepo {

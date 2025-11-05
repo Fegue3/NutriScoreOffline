@@ -43,9 +43,7 @@ class _SignInScreenState extends State<SignInScreen> {
     setState(() => _loading = false);
 
     if (error != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
       return;
     }
 
@@ -164,9 +162,8 @@ class _SignInScreenState extends State<SignInScreen> {
                               label: 'Email',
                               hint: 'nome@dominio.com',
                             ),
-                            validator: (v) => (v == null || !v.contains('@'))
-                                ? 'Email inválido'
-                                : null,
+                            validator: (v) =>
+                                (v == null || !v.contains('@')) ? 'Email inválido' : null,
                           ),
                           const SizedBox(height: 16),
                           TextFormField(
@@ -177,51 +174,16 @@ class _SignInScreenState extends State<SignInScreen> {
                             decoration: _inputDecoration(
                               label: 'Palavra-passe',
                               suffix: IconButton(
-                                onPressed: () =>
-                                    setState(() => _obscure = !_obscure),
-                                icon: Icon(
-                                  _obscure
-                                      ? Icons.visibility
-                                      : Icons.visibility_off,
-                                ),
+                                onPressed: () => setState(() => _obscure = !_obscure),
+                                icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
                                 color: cs.outline,
                               ),
                             ),
-                            validator: (v) => (v == null || v.length < 6)
-                                ? 'Mínimo 6 caracteres'
-                                : null,
+                            validator: (v) =>
+                                (v == null || v.length < 6) ? 'Mínimo 6 caracteres' : null,
                           ),
 
-                          const SizedBox(height: 10),
-
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton(
-                              onPressed: () {
-                                // Apenas UI — sem lógica de recuperação aqui
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      'Fluxo de recuperação (demo UI).',
-                                    ),
-                                  ),
-                                );
-                              },
-                              style: TextButton.styleFrom(
-                                foregroundColor: cs.secondary,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 8,
-                                ),
-                                textStyle: tt.bodyMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              child: const Text('Esqueci-me da palavra-passe'),
-                            ),
-                          ),
-
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 18),
 
                           SizedBox(
                             width: double.infinity,

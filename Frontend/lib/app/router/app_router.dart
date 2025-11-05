@@ -153,7 +153,7 @@ GoRouter buildAppRouter() {
             return null;
           }
 
-          // ---- MEAL (apanha enum direto, DB string ou label PT) ----
+          // ---- MEAL (enum direto, string DB ou label PT) ----
           MealType? meal;
           final dynMeal =
               m['meal'] ??
@@ -180,15 +180,23 @@ GoRouter buildAppRouter() {
                 meal = MealType.dinner;
                 break;
               default:
-                meal = MealTypeX.fromPt(s); // "Almoço", "Jantar", etc.
+                meal = MealTypeX.fromPt(s);
             }
           }
 
-          // ---- DATE (YYYY-MM-DD) ----
+          // ---- DATE: aceita dateYmd OU DateTime direto ('date' / 'selectedDate') ----
           DateTime? date;
           final ymd = (m['dateYmd'] ?? m['selectedDateYmd']) as String?;
           if (ymd != null && ymd.isNotEmpty) {
             date = DateTime.tryParse(ymd);
+          }
+          if (date == null) {
+            final dynDate = m['date'] ?? m['selectedDate'];
+            if (dynDate is DateTime) {
+              date = dynDate;
+            } else if (dynDate is String) {
+              date = DateTime.tryParse(dynDate);
+            }
           }
 
           return ProductDetailScreen(
@@ -209,9 +217,12 @@ GoRouter buildAppRouter() {
             nutriScore: m['nutriScore']?.toString(),
             initialMeal: meal,
             date: date,
-
             readOnly: m['readOnly'] == true,
             freezeFromEntry: m['freezeFromEntry'] == true,
+
+            // 👇 aqui estava o erro: era 'x[...]' e não 'm[...]'
+            initialGrams: (m['initialGrams'] as num?)?.toDouble(),
+            existingMealItemId: m['existingMealItemId'] as String?,
           );
         },
       ),

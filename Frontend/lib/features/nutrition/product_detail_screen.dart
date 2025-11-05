@@ -40,6 +40,8 @@ class ProductDetailScreen extends StatefulWidget {
     // Modo leitura (apenas ver; sem CTA e sem controles de porção/refeição)
     this.readOnly = false,
     this.freezeFromEntry = false,
+    this.initialGrams,
+    this.existingMealItemId,
   });
 
   final String? barcode;
@@ -65,6 +67,8 @@ class ProductDetailScreen extends StatefulWidget {
 
   final bool readOnly;
   final bool freezeFromEntry;
+  final double? initialGrams;
+  final String? existingMealItemId;
 
   @override
   State<ProductDetailScreen> createState() => _ProductDetailScreenState();
@@ -104,7 +108,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     // 1) refeição inicial e dados base do produto (fallbacks de UI)
     _selectedMeal = widget.initialMeal ?? MealType.breakfast;
     _hydrateWithFallback();
-
+    _seedPortionsFromInitial();
     // 2) “carregamento” visual se tiver barcode
     _simulateLoadIfBarcode();
 
@@ -131,6 +135,35 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }();
     _loadFromRepoAndLog();
     _syncFavoriteInitial();
+  }
+
+  ({String unit, double base}) _parseBase() {
+    final b = _baseLabel.trim().toLowerCase();
+    final m = RegExp(r'(\d+(?:[.,]\d+)?)\s*(g|ml)\b').firstMatch(b);
+    if (m != null) {
+      final v = double.parse(m.group(1)!.replaceAll(',', '.'));
+      final u = m.group(2)!.toLowerCase() == 'g' ? 'GRAM' : 'ML';
+      return (unit: u, base: v); // ex.: (GRAM, 100) ou (ML, 100)
+    }
+    if (b.contains('porç') || b.contains('unid')) {
+      return (unit: 'PIECE', base: 1); // 1 porção/unidade
+    }
+    return (unit: 'GRAM', base: 100); // fallback sensato
+  }
+
+  void _seedPortionsFromInitial() {
+    final parsed = _parseBase();
+    // Só temos initialGrams por agora — preenche quando a base é em gramas
+    if (parsed.unit == 'GRAM' && (widget.initialGrams ?? 0) > 0) {
+      _portions = (widget.initialGrams!) / parsed.base; // ex.: 120/100 = 1.2
+      _portionCtrl.text = (_portions % 1 == 0)
+          ? _portions.toStringAsFixed(0)
+          : _portions.toStringAsFixed(2);
+    } else {
+      // outros casos (ML/PIECE) ficam a 1 por agora
+      _portions = 1;
+      _portionCtrl.text = '1';
+    }
   }
 
   Future<void> _loadFromRepoAndLog() async {
@@ -315,7 +348,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             child: Center(
                               child: Text(
                                 widget.readOnly
-                                    ? "Detalhe do alimento"
+                                    ? "Detalhes do alimento"
                                     : "Adicionar alimento",
                                 style: tt.titleLarge?.copyWith(
                                   color: cs.onPrimary,
@@ -467,13 +500,15 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       ),
 
                       // Controles (se não for readOnly)
+                      // Controles (se não for readOnly)
                       if (!widget.readOnly) ...[
                         const SizedBox(height: 12),
-                        _MealDropdown(
-                          value: _selectedMeal,
-                          onChanged: (v) => setState(() => _selectedMeal = v),
-                        ),
-                        const SizedBox(height: 12),
+                        if (!widget.freezeFromEntry)
+                          _MealDropdown(
+                            value: _selectedMeal,
+                            onChanged: (v) => setState(() => _selectedMeal = v),
+                          ),
+                        if (!widget.freezeFromEntry) const SizedBox(height: 12),
                         _PortionInput(
                           controller: _portionCtrl,
                           baseLabel: effectiveLabel,
@@ -537,22 +572,45 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   child: FilledButton(
                     onPressed: () async {
                       final user = await di.userRepo.currentUser();
-                      if (user == null || (widget.barcode ?? '').isEmpty) {
+                      final code = (widget.barcode ?? '').trim();
+                      if (user == null) return;
+
+                      // Lê a base real da UI e calcula a quantidade final
+                      final parsed = _parseBase();
+                      final double quantity = (parsed.unit == 'PIECE')
+                          ? (_portions <= 0 ? 1 : _portions) // nº de porções
+                          : ((_portions <= 0 ? 1 : _portions) *
+                                parsed.base); // g ou ml finais
+
+                      // ===== EDITAR =====
+                      if (widget.freezeFromEntry &&
+                          (widget.existingMealItemId?.isNotEmpty ?? false)) {
+                        await di.mealsRepo.updateMealItemQuantity(
+                          widget.existingMealItemId!,
+                          unit: parsed.unit, // 'GRAM' | 'ML' | 'PIECE'
+                          quantity:
+                              quantity, //  ex.: 120.0 g   || 250.0 ml || 1.5 porções
+                        );
+
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Guardado')),
+                        );
+                        Navigator.of(context).maybePop();
                         return;
                       }
 
-                      // porções × 100 g  → usamos unidade 'GRAM'
-                      final grams = (_portions <= 0 ? 1 : _portions) * 100.0;
-
+                      // ===== ADICIONAR =====
                       await di.mealsRepo.addOrUpdateMealItem(
                         AddMealItemInput(
                           userId: user.id,
                           dayUtcCanon: (widget.date ?? DateTime.now().toUtc()),
                           mealType: _selectedMeal.name.toUpperCase(),
-                          productBarcode: widget.barcode,
+                          productBarcode: code,
                           customFoodId: null,
-                          unit: 'GRAM',
-                          quantity: grams,
+                          unit: parsed.unit, // respeita base
+                          quantity:
+                              quantity, // calculado a partir do multiplicador × base
                         ),
                       );
 
@@ -566,7 +624,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       );
                       Navigator.of(context).maybePop();
                     },
-                    child: Text("Adicionar ao ${_selectedMeal.labelPt}"),
+
+                    child: Text(
+                      widget.freezeFromEntry
+                          ? "Guardar" // modo edição
+                          : "Adicionar ao ${_selectedMeal.labelPt}", // modo normal
+                    ),
                   ),
                 ),
               ),

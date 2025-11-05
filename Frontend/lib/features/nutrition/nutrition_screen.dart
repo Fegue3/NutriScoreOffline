@@ -174,34 +174,44 @@ class _NutritionScreenState extends State<NutritionScreen> {
 
   // ======= NAV: Detalhe do produto (vai para productDetail) =======
   void _openEntry(MealEntry e) {
-    // construir um extra simples a partir do registo
-    final baseQty = e.quantityGrams != null
-        ? '${e.quantityGrams!.round()} g'
-        : (e.quantityMl != null
-              ? '${e.quantityMl!.round()} ml'
-              : (e.servings != null
-                    ? (e.servings! % 1 == 0
-                          ? '${e.servings!.toInt()} porção'
-                          : '${e.servings!.toStringAsFixed(1)} porções')
-                    : '1 porção'));
+    // Base para a UI do detalhe (apenas o "tamanho" da unidade base)
+    final String baseQty = (e.quantityGrams != null)
+        ? '100 g' // item registado em gramas → base g
+        : (e.quantityMl != null)
+        ? '100 ml' // item registado em ml → base ml
+        : '1 porção'; // senão, assume porção/unidade
 
-    context.pushNamed(
-      'productDetail',
-      extra: {
-        'barcode': e.barcode,
-        'name': e.name,
-        'brand': e.brand,
-        'baseQuantityLabel': baseQty,
-        // Para UI: enviamos kcal/prot/carb/fat por "porção" registada
-        'kcalPerBase': e.calories?.round(),
-        'proteinGPerBase': (e.protein ?? 0).toDouble(),
-        'carbsGPerBase': (e.carbs ?? 0).toDouble(),
-        'fatGPerBase': (e.fat ?? 0).toDouble(),
-        // flags só-UI
-        'readOnly': true,
-        'freezeFromEntry': true,
-      },
-    );
+    final dayCanon = DateTime.now().toUtc().add(Duration(days: _dayOffset));
+
+    context
+        .pushNamed(
+          'productDetail',
+          extra: {
+            'barcode': e.barcode,
+            'name': e.name,
+            'brand': e.brand,
+            'baseQuantityLabel': baseQty,
+
+            // valores para UI (opcional)
+            'kcalPerBase': e.calories?.round(),
+            'proteinGPerBase': (e.protein ?? 0).toDouble(),
+            'carbsGPerBase': (e.carbs ?? 0).toDouble(),
+            'fatGPerBase': (e.fat ?? 0).toDouble(),
+
+            // ===== edição =====
+            'freezeFromEntry': true,
+            'readOnly': false,
+            'initialMeal': e.meal,
+            'date': dayCanon,
+
+            // para UPDATE correto e prefill do multiplicador
+            'existingMealItemId': e.id,
+            'initialGrams': e.quantityGrams
+                ?.toDouble(), // usado se base for 'g'
+            // (se quiseres, podes também enviar 'initialMl' / 'initialServings' mais tarde)
+          },
+        )
+        .then((_) => _loadDay());
   }
 
   @override

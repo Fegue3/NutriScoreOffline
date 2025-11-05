@@ -19,9 +19,10 @@ class ProductsRepoSqlite implements ProductsRepo {
 
   @override
   Future<List<ProductModel>> searchByName(String q, {int limit = 50}) async {
-    final likeAll = '%$q%';
-    final likePrefix = '$q%';
-    final likeWord = '% $q%'; // match em início de palavra (…“ snickers”)
+    final qNorm = q.trim().replaceAll(RegExp(r'\s+'), ' ');
+    final likeAll = '%$qNorm%';
+    final likePrefix = '$qNorm%';
+    final likeWord = '% $qNorm%'; // início de palavra: “... snickers”
 
     final rows = await db
         .customSelect(
@@ -33,17 +34,17 @@ class ProductsRepoSqlite implements ProductsRepo {
     FROM Product
     WHERE (brand IS NOT NULL AND TRIM(brand) <> '')
       AND (
-           name LIKE ? COLLATE NOCASE
+           name    LIKE ? COLLATE NOCASE
         OR barcode LIKE ?
-        OR brand LIKE ? COLLATE NOCASE
+        OR brand   LIKE ? COLLATE NOCASE
       )
     ORDER BY
       CASE
-        WHEN lower(name) = lower(?)        THEN 0  -- EXACT match
+        WHEN lower(name) = lower(?)        THEN 0  -- nome EXATO
         WHEN lower(name) LIKE lower(?)     THEN 1  -- prefixo: q%
         WHEN lower(name) LIKE lower(?)     THEN 2  -- palavra: % q%
         WHEN lower(name) LIKE lower(?)     THEN 3  -- contém: %q%
-        WHEN barcode = ?                   THEN 4  -- barcode exato (abaixo dos nomes)
+        WHEN barcode = ?                   THEN 4  -- barcode exato (abaixo de nomes)
         WHEN barcode LIKE ?                THEN 5  -- barcode contém
         ELSE 6
       END,
@@ -52,15 +53,15 @@ class ProductsRepoSqlite implements ProductsRepo {
     LIMIT ?
     ''',
           variables: [
-            Variable.withString(likeAll), // name LIKE ?
-            Variable.withString(likeAll), // barcode LIKE ?
-            Variable.withString(likeAll), // brand LIKE ?
-            Variable.withString(q), // exact
-            Variable.withString(likePrefix), // prefix
-            Variable.withString(likeWord), // word-boundary
-            Variable.withString(likeAll), // contains
-            Variable.withString(q), // barcode exact
-            Variable.withString(likeAll), // barcode contains
+            Variable.withString(likeAll),     // name LIKE ?
+            Variable.withString(likeAll),     // barcode LIKE ?
+            Variable.withString(likeAll),     // brand LIKE ?
+            Variable.withString(qNorm),       // exact
+            Variable.withString(likePrefix),  // prefix
+            Variable.withString(likeWord),    // word-boundary
+            Variable.withString(likeAll),     // contains
+            Variable.withString(qNorm),       // barcode exact
+            Variable.withString(likeAll),     // barcode contains
             Variable.withInt(limit),
           ],
         )
@@ -112,8 +113,8 @@ class ProductsRepoSqlite implements ProductsRepo {
     return ProductModel(
       id: d['id'] as String,
       barcode: d['barcode'] as String,
-      name: d['name'] as String,
-      brand: d['brand'] as String?,
+      name: (d['name'] as String).trim(),
+      brand: (d['brand'] as String?)?.trim(),
       energyKcal100g: d['energyKcal100g'] as int?,
       protein100g: (d['protein100g'] as num?)?.toDouble(),
       carb100g: (d['carb100g'] as num?)?.toDouble(),
@@ -124,14 +125,15 @@ class ProductsRepoSqlite implements ProductsRepo {
     );
   }
 
-  // Utilitário extra (não faz parte da interface): paginação e filtro por país, se precisares.
+  // Utilitário extra (não faz parte da interface).
   Future<List<ProductModel>> searchLocal(
     String q, {
     int page = 1,
     int pageSize = 20,
     String? countriesFilter, // ex.: '%portugal%' ou '%spain%'
   }) async {
-    final like = '%${q.trim()}%';
+    final qNorm = q.trim().replaceAll(RegExp(r'\s+'), ' ');
+    final like = '%$qNorm%';
     final offset = (page - 1) * pageSize;
 
     final vars = <Variable>[
@@ -189,7 +191,7 @@ class ProductsRepoSqlite implements ProductsRepo {
         brand=excluded.brand,
         energyKcal_100g=excluded.energyKcal_100g,
         proteins_100g=excluded.proteins_100g,
-        carbs_100g=excluded.carbs_100g,
+        carbs_100g=excluded.carb_100g,
         fat_100g=excluded.fat_100g,
         sugars_100g=excluded.sugars_100g,
         fiber_100g=excluded.fiber_100g,
@@ -200,7 +202,7 @@ class ProductsRepoSqlite implements ProductsRepo {
         id,
         p.barcode,
         p.name,
-        p.brand,              // <-- NOVO (guardar brand)
+        p.brand, // guardar brand
         p.energyKcal100g,
         p.protein100g,
         p.carb100g,

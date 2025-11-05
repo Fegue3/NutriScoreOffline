@@ -10,8 +10,8 @@ import 'sync_queue.dart';
 import 'config.dart';
 
 /// Repositório híbrido (offline-first) compatível com BD antiga.
-/// - Busca local primeiro.
-/// - Só vai online no getByBarcode() ou searchByName() *quando o user submete*.
+/// - Busca local primeiro (com ranking: EXATO > prefixo > palavra > contém > barcode exato > barcode contém).
+/// - Só vai online no getByBarcode() ou fetchOnlineAndCache() (quando o user submete).
 /// - Gera IDs únicos para evitar conflitos.
 class ProductsRepoHybrid implements ProductsRepo {
   final NutriDatabase db;
@@ -54,7 +54,7 @@ class ProductsRepoHybrid implements ProductsRepo {
   Future<void> _upsertLocalFromDto(OffProductDto d, {String? etag}) async {
     final m = dtoToProductModel(d);
     final args = [
-      _uuid.v4(), // ✅ gera novo ID único
+      _uuid.v4(), // gera novo ID único
       m.barcode,
       m.name,
       m.brand,
@@ -99,6 +99,7 @@ class ProductsRepoHybrid implements ProductsRepo {
       );
     } catch (e) {
       // fallback para bases antigas
+      // ignore: avoid_print
       print("⚠️ [HybridRepo] Fallback insert sem colunas novas: $e");
       try {
         await db.customStatement(
@@ -124,6 +125,7 @@ class ProductsRepoHybrid implements ProductsRepo {
           args,
         );
       } catch (e2) {
+        // ignore: avoid_print
         print("❌ [HybridRepo] Erro no fallback insert: $e2");
       }
     }
@@ -152,20 +154,24 @@ class ProductsRepoHybrid implements ProductsRepo {
     final local = await _getLocalRowByBarcode(barcode);
 
     if (local != null) {
+      // ignore: avoid_print
       print("🔎 [HybridRepo] Produto $barcode encontrado localmente");
       return _rowToModel(local);
     }
 
+    // ignore: avoid_print
     print("🌍 [HybridRepo] A ir à OFF API para barcode $barcode");
     try {
       final (dto, newEtag, _) = await remote.getByBarcode(barcode, etag: null);
       if (dto != null) {
         await _upsertLocalFromDto(dto, etag: newEtag);
         final refreshed = await _getLocalRowByBarcode(barcode);
+        // ignore: avoid_print
         print("✅ [HybridRepo] Produto $barcode guardado localmente");
         return refreshed != null ? _rowToModel(refreshed) : null;
       }
     } catch (e) {
+      // ignore: avoid_print
       print("⚠️ [HybridRepo] Falha ao obter produto online: $e");
     }
 
@@ -174,7 +180,12 @@ class ProductsRepoHybrid implements ProductsRepo {
 
   @override
   Future<List<ProductModel>> searchByName(String q, {int limit = 50}) async {
-    final likeAll = '%$q%';
+    // mesma prioridade do repo sqlite: EXATO > prefixo > palavra > contém > barcode exato > barcode contém
+    final qNorm = q.trim().replaceAll(RegExp(r'\s+'), ' ');
+    final likeAll = '%$qNorm%';
+    final likePrefix = '$qNorm%';
+    final likeWord = '% $qNorm%';
+
     final rows = await db.customSelect(
       '''
       SELECT id, barcode, name, brand,
@@ -182,13 +193,34 @@ class ProductsRepoHybrid implements ProductsRepo {
              sugars_100g, fiber_100g, salt_100g
       FROM Product
       WHERE (brand IS NOT NULL AND TRIM(brand) <> '')
-        AND (name LIKE ? COLLATE NOCASE OR barcode LIKE ? OR brand LIKE ? COLLATE NOCASE)
-      ORDER BY name COLLATE NOCASE ASC
+        AND (
+             name    LIKE ? COLLATE NOCASE
+          OR barcode LIKE ?
+          OR brand   LIKE ? COLLATE NOCASE
+        )
+      ORDER BY
+        CASE
+          WHEN lower(name) = lower(?)        THEN 0
+          WHEN lower(name) LIKE lower(?)     THEN 1
+          WHEN lower(name) LIKE lower(?)     THEN 2
+          WHEN lower(name) LIKE lower(?)     THEN 3
+          WHEN barcode = ?                   THEN 4
+          WHEN barcode LIKE ?                THEN 5
+          ELSE 6
+        END,
+        length(name) ASC,
+        name COLLATE NOCASE ASC
       LIMIT ?;
       ''',
       variables: [
         Variable.withString(likeAll),
         Variable.withString(likeAll),
+        Variable.withString(likeAll),
+        Variable.withString(qNorm),
+        Variable.withString(likePrefix),
+        Variable.withString(likeWord),
+        Variable.withString(likeAll),
+        Variable.withString(qNorm),
         Variable.withString(likeAll),
         Variable.withInt(limit),
       ],
@@ -197,20 +229,25 @@ class ProductsRepoHybrid implements ProductsRepo {
     final localResults = rows.map((r) => _rowToModel(r.data)).toList();
 
     if (localResults.isNotEmpty) {
-      print("🔎 [HybridRepo] '$q' encontrado localmente (${localResults.length} resultados)");
+      // ignore: avoid_print
+      print("🔎 [HybridRepo] '$qNorm' encontrado localmente (${localResults.length} resultados, rankeados)");
       return localResults;
     }
 
-    // ⚙️ Só vai online quando o user submete explicitamente (handled pela UI)
-    print("🕓 [HybridRepo] '$q' não existe localmente — aguardar submit do user");
+    // ⚙️ Só vai online quando o utilizador submete explicitamente via UI (fetchOnlineAndCache)
+    // ignore: avoid_print
+    print("🕓 [HybridRepo] '$qNorm' não existe localmente — aguardar submit do user");
     return localResults;
   }
 
-  /// Método extra: chamado apenas quando o utilizador pressiona “Enter” ou “Pesquisar”.
+  /// Chama isto quando o utilizador pressiona “Enter/Pesquisar”.
+  /// Faz fetch online, guarda localmente e volta a pesquisar com o mesmo ranking.
   Future<List<ProductModel>> fetchOnlineAndCache(String q, {int limit = 50}) async {
-    print("🌍 [HybridRepo] Fetch online submit → '$q'");
+    final qNorm = q.trim().replaceAll(RegExp(r'\s+'), ' ');
+    // ignore: avoid_print
+    print("🌍 [HybridRepo] Fetch online submit → '$qNorm'");
     try {
-      final list = await remote.search(q, limit: limit);
+      final list = await remote.search(qNorm, limit: limit);
       if (list.isNotEmpty) {
         await db.transaction(() async {
           for (final d in list) {
@@ -218,11 +255,14 @@ class ProductsRepoHybrid implements ProductsRepo {
             await _upsertLocalFromDto(d);
           }
         });
+        // ignore: avoid_print
         print("✅ [HybridRepo] ${list.length} produtos da OFF API guardados");
 
-        return await searchByName(q, limit: limit);
+        // reutiliza a mesma query local com ranking
+        return await searchByName(qNorm, limit: limit);
       }
     } catch (e) {
+      // ignore: avoid_print
       print("⚠️ [HybridRepo] Erro ao fazer fetch online: $e");
     }
     return [];
@@ -243,7 +283,7 @@ class ProductsRepoHybrid implements ProductsRepo {
         brand=excluded.brand,
         energyKcal_100g=excluded.energyKcal_100g,
         proteins_100g=excluded.proteins_100g,
-        carbs_100g=excluded.carbs_100g,
+        carbs_100g=excluded.carb_100g,
         fat_100g=excluded.fat_100g,
         sugars_100g=excluded.sugars_100g,
         fiber_100g=excluded.fiber_100g,

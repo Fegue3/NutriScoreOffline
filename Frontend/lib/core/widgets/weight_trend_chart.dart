@@ -18,7 +18,7 @@ class WeightTrendCard extends StatelessWidget {
     this.title = 'Evolução do peso',
     this.showLegend = true,
     this.height = 240,
-    this.collapseSameDay = true, // <— NOVO
+    this.collapseSameDay = true,
   });
 
   final List<WeightPoint> points;

@@ -7,7 +7,6 @@ class HistoryRepoSqlite implements HistoryRepo {
   final NutriDatabase db;
   HistoryRepoSqlite(this.db);
 
-  // (Opcional) igual ao dos favoritos — útil se quiseres garantir que Product
   // tem name/brand antes de inserir histórico (não altera schema).
   Future<void> _upsertProductBasic({
     required String barcode,
@@ -23,7 +22,6 @@ class HistoryRepoSqlite implements HistoryRepo {
     ''', [barcode, name, brand]);
   }
 
-  /// Variante opcional: usa quando tiveres o produto carregado (name/brand).
   Future<void> addIfNotDuplicateWithProduct(
     String userId, {
     required String barcode,
@@ -77,9 +75,6 @@ class HistoryRepoSqlite implements HistoryRepo {
     if (last != null && (last.data['barcode'] as String?) == s.barcode) {
       return;
     }
-
-    // Se o teu HistorySnapshot já tiver name/brand, podes ligar isto:
-    // await _upsertProductBasic(barcode: s.barcode, name: s.name, brand: s.brand);
 
     await db.customStatement(
       '''

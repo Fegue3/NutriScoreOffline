@@ -27,12 +27,6 @@ class LocalBootstrap {
         await db.customStatement(s);
       }
     });
-
-    // 3) (Opcional) seed inicial
-    // await db.customStatement(
-    //   "INSERT INTO User(id,email,name,createdAt,updatedAt) VALUES(?,?,?,datetime('now'),datetime('now'))",
-    //   ['u_demo', 'demo@local', 'Demo'],
-    // );
   }
 
   Future<bool> _tableExists(String table) async {

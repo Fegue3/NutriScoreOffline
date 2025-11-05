@@ -234,7 +234,7 @@ class ProductsRepoHybrid implements ProductsRepo {
       return localResults;
     }
 
-    // ⚙️ Só vai online quando o utilizador submete explicitamente via UI (fetchOnlineAndCache)
+    // Só vai online quando o utilizador submete explicitamente via UI (fetchOnlineAndCache)
     // ignore: avoid_print
     print("🕓 [HybridRepo] '$qNorm' não existe localmente — aguardar submit do user");
     return localResults;

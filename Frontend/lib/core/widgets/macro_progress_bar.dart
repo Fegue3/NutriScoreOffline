@@ -11,7 +11,7 @@ class MacroProgressBar extends StatefulWidget {
   final EdgeInsets padding;
   final bool dense;
 
-  /// Cores (opcional). Se não passares, usa o tema.
+  /// Cores
   final Color? color;           // cor da barra (ex.: primary/secondary/error)
   final Color? backgroundColor; // fundo da barra
   final Duration duration;      // duração da animação

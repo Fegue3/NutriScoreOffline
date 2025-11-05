@@ -64,7 +64,7 @@ class WeightRepoSqlite implements WeightRepo {
         .toList();
   }
 
-  // (opcional) último peso global do utilizador
+  //último peso global do utilizador
   Future<WeightLogModel?> latest(String userId) async {
     final rows = await db
         .customSelect(

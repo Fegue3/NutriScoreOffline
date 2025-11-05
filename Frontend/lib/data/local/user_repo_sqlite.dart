@@ -126,7 +126,7 @@ class UserRepoSqlite implements UserRepo {
     // limpar sessão local
     await secure.clearSession();
 
-    // opcional: limpar TODOS os segredos do device (não é obrigatório)
+    //limpar TODOS os segredos do device (não é obrigatório)
     try {
       await _secureStorage.deleteAll();
     } catch (_) {}

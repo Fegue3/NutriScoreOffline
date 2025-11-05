@@ -12,7 +12,7 @@ import '../data/local/goals_repo_sqlite.dart';
 import '../data/local/favorites_repo_sqlite.dart';
 import '../data/local/history_repo_sqlite.dart';
 
-// === ONLINE (NOVO) ===
+// === ONLINE ===
 import 'package:http/http.dart' as http;
 import '../data/online/config.dart';
 import '../data/online/net_throttle.dart';

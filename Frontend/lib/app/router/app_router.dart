@@ -220,7 +220,6 @@ GoRouter buildAppRouter() {
             readOnly: m['readOnly'] == true,
             freezeFromEntry: m['freezeFromEntry'] == true,
 
-            // 👇 aqui estava o erro: era 'x[...]' e não 'm[...]'
             initialGrams: (m['initialGrams'] as num?)?.toDouble(),
             existingMealItemId: m['existingMealItemId'] as String?,
           );

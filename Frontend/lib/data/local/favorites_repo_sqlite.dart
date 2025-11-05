@@ -8,8 +8,6 @@ class FavoritesRepoSqlite implements FavoritesRepo {
   FavoritesRepoSqlite(this.db);
 
   // ---------------------------------------------------------------------------
-  // (Opcional) quando tiveres name/brand no momento de favoritar,
-  // podes fazer um pequeno UPSERT para garantir que o JOIN tem dados.
   Future<void> _upsertProductBasic({
     required String barcode,
     String? name,

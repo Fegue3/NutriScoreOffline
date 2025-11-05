@@ -136,7 +136,7 @@ class MealsRepoSqlite implements MealsRepo {
         if (r != null) {
           final d = r.data;
           nutr = Nutr100g(
-            kcal: d['energyKcal_100g'] as int?,
+            kcal: (d['energyKcal_100g'] as num?)?.toInt(),
             protein: (d['proteins_100g'] as num?)?.toDouble(),
             carb: (d['carbs_100g'] as num?)?.toDouble(),
             fat: (d['fat_100g'] as num?)?.toDouble(),
@@ -159,7 +159,7 @@ class MealsRepoSqlite implements MealsRepo {
           final d = r.data;
           gramsPerUnit = (d['gramsPerUnit'] as num?)?.toDouble();
           nutr = Nutr100g(
-            kcal: d['energyKcal_100g'] as int?,
+            kcal: (d['energyKcal_100g'] as num?)?.toInt(),
             protein: (d['proteins_100g'] as num?)?.toDouble(),
             carb: (d['carbs_100g'] as num?)?.toDouble(),
             fat: (d['fat_100g'] as num?)?.toDouble(),
@@ -256,6 +256,128 @@ class MealsRepoSqlite implements MealsRepo {
       [id, userId, dayIso, type],
     );
     return id;
+  }
+
+  @override
+  Future<void> updateMealItemQuantity(
+    String mealItemId, {
+    required String unit,
+    required double quantity,
+  }) async {
+    await db.transaction(() async {
+      // 1) contexto do item (para recalcular e atualizar totals)
+      final info = await db
+          .customSelect(
+            '''
+      SELECT mi.mealId, mi.productBarcode, mi.customFoodId,
+             m.userId, m.date AS dayIso
+      FROM MealItem mi
+      JOIN Meal m ON m.id = mi.mealId
+      WHERE mi.id = ?
+      LIMIT 1;
+      ''',
+            variables: [Variable.withString(mealItemId)],
+          )
+          .getSingleOrNull();
+
+      if (info == null) return;
+      final d = info.data;
+      final mealId = d['mealId'] as String;
+      final userId = d['userId'] as String;
+      final dayIso = d['dayIso'] as String;
+      final productBarcode = d['productBarcode'] as String?;
+      final customFoodId = d['customFoodId'] as String?;
+
+      // 2) nutrimentos base (100 g) da fonte
+      Nutr100g nutr = const Nutr100g();
+      double? gramsPerUnit;
+
+      if (productBarcode != null) {
+        final r = await db
+            .customSelect(
+              '''
+        SELECT energyKcal_100g, proteins_100g, carbs_100g, fat_100g,
+               sugars_100g, fiber_100g, salt_100g
+        FROM Product WHERE barcode=? LIMIT 1;
+        ''',
+              variables: [Variable.withString(productBarcode)],
+            )
+            .getSingleOrNull();
+
+        if (r != null) {
+          final x = r.data;
+          nutr = Nutr100g(
+            kcal: (x['energyKcal_100g'] as num?)?.toInt(),
+            protein: (x['proteins_100g'] as num?)?.toDouble(),
+            carb: (x['carbs_100g'] as num?)?.toDouble(),
+            fat: (x['fat_100g'] as num?)?.toDouble(),
+            sugars: (x['sugars_100g'] as num?)?.toDouble(),
+            fiber: (x['fiber_100g'] as num?)?.toDouble(),
+            salt: (x['salt_100g'] as num?)?.toDouble(),
+          );
+        }
+      } else if (customFoodId != null) {
+        final r = await db
+            .customSelect(
+              '''
+        SELECT energyKcal_100g, proteins_100g, carbs_100g, fat_100g,
+               sugars_100g, fiber_100g, salt_100g, gramsPerUnit
+        FROM CustomFood WHERE id=? LIMIT 1;
+        ''',
+              variables: [Variable.withString(customFoodId)],
+            )
+            .getSingleOrNull();
+
+        if (r != null) {
+          final x = r.data;
+          gramsPerUnit = (x['gramsPerUnit'] as num?)?.toDouble();
+          nutr = Nutr100g(
+            kcal: (x['energyKcal_100g'] as num?)?.toInt(),
+            protein: (x['proteins_100g'] as num?)?.toDouble(),
+            carb: (x['carbs_100g'] as num?)?.toDouble(),
+            fat: (x['fat_100g'] as num?)?.toDouble(),
+            sugars: (x['sugars_100g'] as num?)?.toDouble(),
+            fiber: (x['fiber_100g'] as num?)?.toDouble(),
+            salt: (x['salt_100g'] as num?)?.toDouble(),
+          );
+        }
+      }
+
+      // 3) recalcular com a nova quantidade
+      final calc = calcPerQuantity(
+        unit: unit,
+        quantity: quantity,
+        n: nutr,
+        gramsPerUnit: gramsPerUnit,
+      );
+
+      // 4) atualizar o item
+      await db.customStatement(
+        '''
+      UPDATE MealItem
+      SET unit=?, quantity=?, gramsTotal=?,
+          kcal=?, protein=?, carb=?, fat=?, sugars=?, fiber=?, salt=? 
+      WHERE id=?;
+      ''',
+        [
+          unit,
+          quantity,
+          calc.gramsTotal,
+          calc.kcal,
+          calc.protein,
+          calc.carb,
+          calc.fat,
+          calc.sugars,
+          calc.fiber,
+          calc.salt,
+          mealItemId,
+        ],
+      );
+
+      // 5) recalcular totais
+      await _recalcMealTotals(mealId);
+      await _recalcDailyStats(userId, dayIso);
+    });
   }
 
   Future<void> _recalcMealTotals(String mealId) async {

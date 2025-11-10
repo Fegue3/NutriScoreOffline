@@ -1,21 +1,56 @@
-// lib/core/widgets/app_bottom_nav.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../theme.dart';
 
-/// Bottom nav com:
-/// - Pill (sombra) a deslizar entre itens, com fade out quando chega.
-/// - Ícones 32px e label 12px FIXOS (sem zoom).
-/// - Fundo configurável (default #FFFFFFEE) e divisor superior opcional.
+/// NutriScore — Barra de Navegação Inferior (AppBottomNav)
+///
+/// Componente de navegação com 3 itens (Dashboard, Diário, Definições) que:
+/// - Usa um **indicador "pill"** com *slide* + *fade-out* para realçar o tab ativo;
+/// - Mantém **ícones a 32px** e **labels a 12px** (fixos, sem zoom);
+/// - Permite **configurar fundo** semi-transparente e **divisor** superior.
+///
+/// ### Diretrizes de design (NutriScore)
+/// - Cores: usa `AppColors.freshGreen` para o estado **ativo**; `AppColors.coolGray`
+///   para **inativo**; fundo por omissão `Color(0xEEFFFFFF)` (semelhante ao DS);
+/// - Tipografia: label com `AppText.bodyFamily`, **12px** (Caption/Labels);
+/// - Acessibilidade: ícone + label (não depende só da cor).
+///
+/// ### Exemplo de utilização
+/// ```dart
+/// AppBottomNav(
+///   currentIndex: 0,
+///   onChanged: (i) {
+///     // navegar para /dashboard, /diary ou /settings
+///   },
+/// )
+/// ```
 class AppBottomNav extends StatefulWidget {
+  /// Índice do tab atualmente selecionado.
+  ///
+  /// - `0` → Dashboard
+  /// - `1` → Diário
+  /// - `2` → Definições
   final int currentIndex;
+
+  /// Callback disparado quando o utilizador toca noutro tab.
+  ///
+  /// Recebe o índice do item escolhido (`0..2`).
   final ValueChanged<int> onChanged;
 
   // Destaque/estilo
+
+  /// Cor de fundo da barra (por omissão `0xEEFFFFFF`, branco com opacidade).
+  ///
+  /// Sugestão: manter contraste adequado com o conteúdo (WCAG AA).
   final Color backgroundColor; // destaca vs app bg (#FAFAF7)
+
+  /// Mostra uma linha divisória (1px) no topo da barra.
   final bool showTopDivider;   // linha 1px no topo
+
+  /// Se `true`, mantém a "pill" visível mesmo quando parada (sem animação recente).
   final bool showIndicatorWhenIdle; // se true, mantém a pill visível parado
 
+  /// Cria a barra de navegação inferior do NutriScore.
   const AppBottomNav({
     super.key,
     required this.currentIndex,
@@ -31,20 +66,38 @@ class AppBottomNav extends StatefulWidget {
 
 class _AppBottomNavState extends State<AppBottomNav> {
   // Layout / animações
+
+  /// Altura total da barra (um pouco maior para conforto táctil).
   static const double _barHeight = 88.0;   // barra um pouco maior
+
+  /// Duração (ms) do slide do indicador.
   static const int _animMs = 280;          // velocidade do slide
+
+  /// Altura da "pill" (indicador visual).
   static const double _pillH = 60.0;       // altura do "pill" (sombra)
+
+  /// Padding horizontal interno na célula ao calcular a largura da "pill".
   static const double _pillHPad = 21.0;    // padding lateral dentro da célula
+
+  /// Largura mínima/máxima da "pill" para estabilidade visual.
   static const double _pillMinW = 86.0;    // limites para estabilidade
   static const double _pillMaxW = 164.0;
 
+  /// Especificação fixa dos 3 itens da *Bottom Nav*.
+  ///
+  /// - `Painel` (Dashboard)
+  /// - `Diário`
+  /// - `Mais` (Definições)
   static const _items = <_NavSpec>[
     _NavSpec('Painel', Icons.dashboard_outlined, Icons.dashboard_rounded),
     _NavSpec('Diário', Icons.book_outlined, Icons.book_rounded),
     _NavSpec('Mais', Icons.settings_outlined, Icons.settings_rounded),
   ];
 
+  /// Opacidade atual do indicador "pill" (0..1).
   double _indicatorOpacity = 0.0;
+
+  /// Temporizador para fazer *fade-out* depois da animação de slide terminar.
   Timer? _fadeTimer;
 
   @override
@@ -155,20 +208,42 @@ class _AppBottomNavState extends State<AppBottomNav> {
   }
 }
 
+/// Especificação interna de um item de navegação (label + ícones).
 class _NavSpec {
+  /// Texto apresentado por baixo do ícone.
   final String label;
+
+  /// Ícone a usar quando o item **não** está selecionado.
   final IconData icon;
+
+  /// Ícone a usar quando o item está **selecionado**.
   final IconData selectedIcon;
+
+  /// Cria uma especificação de item de navegação.
   const _NavSpec(this.label, this.icon, this.selectedIcon);
 }
 
+/// Botão individual de item de *Bottom Nav* (ícone + label).
+///
+/// Responsável apenas pela apresentação e *tap*; o estado de seleção é
+/// passado via [selected].
 class _NavButton extends StatelessWidget {
+  /// Label exibido sob o ícone.
   final String label;
+
+  /// Ícone normal (inativo).
   final IconData icon;
+
+  /// Ícone para o estado selecionado (ativo).
   final IconData selectedIcon;
+
+  /// Indica se este item está selecionado.
   final bool selected;
+
+  /// Callback invocado ao tocar no item.
   final VoidCallback onTap;
 
+  /// Cria um item de navegação com ícone e texto.
   const _NavButton({
     required this.label,
     required this.icon,

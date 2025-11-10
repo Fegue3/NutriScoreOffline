@@ -3,6 +3,19 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../app/di.dart';
 
+/// Ecrã de **autenticação – Entrar**.
+///
+/// Responsabilidades:
+/// - Apresentar um formulário simples com *email* e *palavra-passe*;
+/// - Validar campos localmente (form `FormState`);
+/// - Invocar `di.userRepo.signIn(...)`;
+/// - Exibir feedback de erro via `SnackBar`;
+/// - Redirecionar para `/dashboard` em caso de sucesso.
+///
+/// Acessibilidade / UX:
+/// - Campos com `labelText` e `hintText`;
+/// - Botão para mostrar/ocultar a palavra-passe;
+/// - Estado de carregamento (desativa o botão e mostra *spinner*).
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
 
@@ -11,10 +24,19 @@ class SignInScreen extends StatefulWidget {
 }
 
 class _SignInScreenState extends State<SignInScreen> {
+  /// *Key* do formulário para validações/saves.
   final _formKey = GlobalKey<FormState>();
+
+  /// Controlador do campo de email.
   final _email = TextEditingController();
+
+  /// Controlador do campo de palavra-passe.
   final _password = TextEditingController();
+
+  /// Indica se está a decorrer o *submit* (bloqueia UI).
   bool _loading = false;
+
+  /// Controla a visibilidade da palavra-passe.
   bool _obscure = true;
 
   @override
@@ -24,6 +46,11 @@ class _SignInScreenState extends State<SignInScreen> {
     super.dispose();
   }
 
+  /// Submete o formulário:
+  /// 1) Valida os campos;
+  /// 2) Chama `userRepo.signIn`;
+  /// 3) Mostra `SnackBar` em caso de erro;
+  /// 4) Faz `go('/dashboard')` no sucesso.
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
@@ -51,6 +78,12 @@ class _SignInScreenState extends State<SignInScreen> {
     GoRouter.of(context).go('/dashboard');
   }
 
+  /// Constrói a decoração base dos `TextFormField` deste ecrã.
+  ///
+  /// Parâmetros:
+  /// - [label] Texto do *label* (obrigatório);
+  /// - [hint]  Texto de ajuda (opcional);
+  /// - [suffix] Ícone/ação à direita (opcional), p.ex. *toggle* da palavra-passe.
   InputDecoration _inputDecoration({
     required String label,
     String? hint,
@@ -154,6 +187,7 @@ class _SignInScreenState extends State<SignInScreen> {
                       key: _formKey,
                       child: Column(
                         children: [
+                          // Campo de email
                           TextFormField(
                             controller: _email,
                             keyboardType: TextInputType.emailAddress,
@@ -165,7 +199,10 @@ class _SignInScreenState extends State<SignInScreen> {
                             validator: (v) =>
                                 (v == null || !v.contains('@')) ? 'Email inválido' : null,
                           ),
+
                           const SizedBox(height: 16),
+
+                          // Campo de palavra-passe
                           TextFormField(
                             controller: _password,
                             obscureText: _obscure,
@@ -185,6 +222,7 @@ class _SignInScreenState extends State<SignInScreen> {
 
                           const SizedBox(height: 18),
 
+                          // Botão Entrar
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton(
@@ -214,6 +252,7 @@ class _SignInScreenState extends State<SignInScreen> {
 
                           const SizedBox(height: 14),
 
+                          // Link para criar conta
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
@@ -247,6 +286,7 @@ class _SignInScreenState extends State<SignInScreen> {
 
                   const SizedBox(height: 24),
 
+                  // Versão / rodapé
                   Text(
                     'NutriScore • v0.1',
                     style: tt.bodySmall?.copyWith(

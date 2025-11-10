@@ -7,7 +7,27 @@ import '../../app/di.dart';
 import '../../domain/models.dart';
 import '../../core/meal_type.dart'; // <- fonte única do enum + extension labelPt
 
-/// NutriScore — ProductDetailScreen (UI)
+// -----------------------------------------------------------------------------
+// NutriScore — ProductDetailScreen
+// -----------------------------------------------------------------------------
+// Ecrã de detalhe de um alimento/produto, preparado para 2 grandes modos:
+//  1) Modo normal   → permite escolher refeição + porções e adicionar ao diário;
+//  2) Modo readOnly → mostra apenas a informação nutricional, sem CTA.
+//
+// Este ecrã foi pensado para trabalhar tanto com produtos vindos de:
+//  - scan por código de barras;
+//  - histórico/favoritos;
+//  - resultados de pesquisa;
+// como também com “fallbacks” passados via `Widget` (nome, marca, macros, etc.).
+//
+// Integração com o domínio via DI:
+//  - `productsRepo`  → carrega dados reais do produto, se existir;
+//  - `historyRepo`   → regista o acesso ao produto no histórico;
+//  - `favoritesRepo` → marca/desmarca o produto como favorito;
+//  - `mealsRepo`     → adiciona ou atualiza um registo de refeição.
+// -----------------------------------------------------------------------------
+
+/// NutriScore — ProductDetailScreen (UI de detalhe de alimento)
 class ProductDetailScreen extends StatefulWidget {
   const ProductDetailScreen({
     super.key,
@@ -15,7 +35,7 @@ class ProductDetailScreen extends StatefulWidget {
     // Preferencialmente usar barcode (apenas exibido na UI)
     this.barcode,
 
-    // Fallbacks (usados como dados do produto)
+    // Fallbacks (usados como dados do produto antes de carregar do repo)
     this.name,
     this.brand,
     this.origin,
@@ -32,59 +52,131 @@ class ProductDetailScreen extends StatefulWidget {
     this.fiberGPerBase,
     this.sodiumGPerBase,
 
-    // Extra
+    // Extra (NutriScore + contexto de diário)
     this.nutriScore,
     this.initialMeal,
     this.date,
 
     // Modo leitura (apenas ver; sem CTA e sem controles de porção/refeição)
     this.readOnly = false,
+
+    // Edição a partir de uma MealEntry já existente
     this.freezeFromEntry = false,
     this.initialGrams,
     this.existingMealItemId,
   });
 
+  /// Código de barras do produto (pode ser usado para fetch + UI).
   final String? barcode;
 
+  /// Nome do produto (fallback inicial para UI caso repo não tenha nada).
   final String? name;
+
+  /// Marca do produto (fallback inicial).
   final String? brand;
+
+  /// Origem/país (opcional, apenas para display).
   final String? origin;
+
+  /// Descrição da “base” de quantidade utilizada:
+  ///   - ex.: "100 g", "100 ml", "1 porção".
   final String? baseQuantityLabel;
 
+  /// Energia (kcal) por base (ex.: por 100 g ou por porção).
   final int? kcalPerBase;
+
+  /// Proteína por base (g).
   final double? proteinGPerBase;
+
+  /// Hidratos por base (g).
   final double? carbsGPerBase;
+
+  /// Gordura por base (g).
   final double? fatGPerBase;
+
+  /// Sal por base (g).
   final double? saltGPerBase;
+
+  /// Açúcares por base (g).
   final double? sugarsGPerBase;
+
+  /// Gordura saturada por base (g).
   final double? satFatGPerBase;
+
+  /// Fibra por base (g).
   final double? fiberGPerBase;
+
+  /// Sódio por base (g).
   final double? sodiumGPerBase;
 
+  /// Letra de NutriScore (A–E), se existir.
   final String? nutriScore;
+
+  /// Refeição inicial (Pequeno-almoço, Almoço, etc.) vinda do `MealType`.
   final MealType? initialMeal; // <- usa o enum do core
+
+  /// Data alvo para registar no diário (se omitido, usa hoje em UTC).
   final DateTime? date;
 
+  /// Se true, o ecrã fica “só leitura”:
+  /// - não mostra dropdown de refeição;
+  /// - não mostra input de porções;
+  /// - não mostra botão final de CTA.
   final bool readOnly;
+
+  /// Se true, significa que estamos a editar um registo já existente do diário:
+  /// - bloqueia escolha de refeição;
+  /// - reusa o mesmo produto/mealItem;
+  /// - apenas atualiza quantidade (gramas/ml/porções).
   final bool freezeFromEntry;
+
+  /// Quantidade inicial em gramas (quando a base é g), para pré-preencher
+  /// o multiplicador de porções (ex.: 120 g → 1.2 × 100 g).
   final double? initialGrams;
+
+  /// ID do item de refeição já existente (para edit/update em vez de insert).
   final String? existingMealItemId;
 
   @override
   State<ProductDetailScreen> createState() => _ProductDetailScreenState();
 }
 
+/// Estado do [ProductDetailScreen].
+///
+/// Responsável por:
+/// - gerir a refeição selecionada ([MealType]);
+/// - interpretar a base de quantidade (`_baseLabel`);
+/// - multiplicar todos os nutrientes pela quantidade de porções;
+/// - integrar com os repositórios:
+///   - `productsRepo` → fetch de produto real pelo barcode;
+///   - `historyRepo` → registo do histórico de consulta;
+///   - `favoritesRepo` → toggle de favoritos;
+///   - `mealsRepo` → adicionar/editar item no diário.
 class _ProductDetailScreenState extends State<ProductDetailScreen> {
+  /// Refeição selecionada para adicionar o produto (Pequeno-almoço, etc.).
   late MealType _selectedMeal; // <- enum do core
 
+  /// Campo de texto para o multiplicador de porções.
   final TextEditingController _portionCtrl = TextEditingController(text: "1");
+
+  /// Número de porções multiplicador da base:
+  /// - ex.: base = 100 g, porções = 1.5 → 150 g.
   double _portions = 1;
 
+  /// Flag de “carregamento suave” do donut (após abrir com barcode).
   bool _loading = false; // só visual
+
+  /// Indica se o produto está marcado como favorito para o utilizador.
   bool _favorited = false;
+
+  /// Flag que bloqueia o botão de favoritos enquanto a operação está a ser
+  /// processada (evita duplos taps).
   bool _favoritedBusy = false; // bloqueia o botão enquanto “processa” (visual)
 
-  // estado do produto (UI)
+  // ---------------------------------------------------------------------------
+  // Estado do produto (valores já preparados para a UI)
+  // ---------------------------------------------------------------------------
+
   String? _name;
   String? _brand;
   String? _origin;
@@ -101,6 +193,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       _fiber = 0,
       _sodium = 0;
 
+  // ---------------------------------------------------------------------------
+  // Ciclo de vida
+  // ---------------------------------------------------------------------------
+
   @override
   void initState() {
     super.initState();
@@ -109,10 +205,14 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     _selectedMeal = widget.initialMeal ?? MealType.breakfast;
     _hydrateWithFallback();
     _seedPortionsFromInitial();
-    // 2) “carregamento” visual se tiver barcode
+
+    // 2) “carregamento” visual se tiver barcode (efeito de loading no donut)
     _simulateLoadIfBarcode();
 
-    // 3) histórico (fire-and-forget)
+    // 3) Histórico inicial (fire-and-forget)
+    //
+    // Regista no histórico o acesso a este produto, com o que tivermos
+    // neste momento (antes de carregar dados mais completos).
     () async {
       final barcode = widget.barcode ?? '';
       if (barcode.isEmpty) return;
@@ -133,26 +233,59 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         ),
       );
     }();
+
+    // 4) Carrega dados mais completos do `productsRepo` + volta a registar
+    //    no histórico com name/brand final.
     _loadFromRepoAndLog();
+
+    // 5) Sincroniza estado inicial de favoritos.
     _syncFavoriteInitial();
   }
 
+  // ---------------------------------------------------------------------------
+  // Helpers de base / porções
+  // ---------------------------------------------------------------------------
+
+  /// Interpreta a `_baseLabel` e devolve:
+  /// - `unit`: "GRAM" | "ML" | "PIECE";
+  /// - `base`: valor numérico base (ex.: 100, 30, 1).
+  ///
+  /// Exemplos:
+  /// - "100 g"      → (unit: GRAM, base: 100)
+  /// - "30 ml"      → (unit: ML, base: 30)
+  /// - "1 porção"   → (unit: PIECE, base: 1)
+  /// - outros casos → fallback (GRAM, 100).
   ({String unit, double base}) _parseBase() {
     final b = _baseLabel.trim().toLowerCase();
+
+    // Tenta capturar “NNN g” ou “NNN ml”
     final m = RegExp(r'(\d+(?:[.,]\d+)?)\s*(g|ml)\b').firstMatch(b);
     if (m != null) {
       final v = double.parse(m.group(1)!.replaceAll(',', '.'));
       final u = m.group(2)!.toLowerCase() == 'g' ? 'GRAM' : 'ML';
       return (unit: u, base: v); // ex.: (GRAM, 100) ou (ML, 100)
     }
+
+    // Palavras que indicam porção/unidade (heurística simples)
     if (b.contains('porç') || b.contains('unid')) {
       return (unit: 'PIECE', base: 1); // 1 porção/unidade
     }
-    return (unit: 'GRAM', base: 100); // fallback sensato
+
+    // Fallback sensato: assume 100 g
+    return (unit: 'GRAM', base: 100);
   }
 
+  /// Pré-preenche o número de porções [_portions] a partir de [initialGrams],
+  /// caso:
+  /// - a base esteja em gramas; e
+  /// - `initialGrams` seja > 0.
+  ///
+  /// Exemplo:
+  /// - base: 100 g, `initialGrams` = 120 → porções = 1.2
+  /// - base: 100 g, `initialGrams` = 50  → porções = 0.5
   void _seedPortionsFromInitial() {
     final parsed = _parseBase();
+
     // Só temos initialGrams por agora — preenche quando a base é em gramas
     if (parsed.unit == 'GRAM' && (widget.initialGrams ?? 0) > 0) {
       _portions = (widget.initialGrams!) / parsed.base; // ex.: 120/100 = 1.2
@@ -166,6 +299,17 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Carregamento do produto + histórico
+  // ---------------------------------------------------------------------------
+
+  /// Carrega o produto real a partir do `productsRepo` (local + online),
+  /// usando o `barcode` se existir.
+  ///
+  /// Caso encontre o produto:
+  /// - preenche `_name`, `_brand`, `_kcalBase`, macros, etc., respeitando
+  ///   eventuais valores que tenham sido passados via `widget` (prioridade);
+  /// - atualiza o histórico com os dados mais completos (name/brand finais).
   Future<void> _loadFromRepoAndLog() async {
     final code = widget.barcode?.trim() ?? '';
     if (code.isEmpty) return;
@@ -207,8 +351,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       user.id,
       HistorySnapshot(
         barcode: code,
-        name: _name, // <- passa o nome
-        brand: _brand, // <- passa a marca
+        name: _name, // <- passa o nome final
+        brand: _brand, // <- passa a marca final
         calories: _kcalBase,
         proteins: _p,
         carbs: _c,
@@ -217,6 +361,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     );
   }
 
+  /// Sincroniza o estado inicial de favoritos para este produto:
+  /// - lê o utilizador e a lista de favoritos;
+  /// - coloca `_favorited = true` se a lista contiver o barcode.
   Future<void> _syncFavoriteInitial() async {
     final barcode = widget.barcode ?? '';
     if (barcode.isEmpty) return;
@@ -226,7 +373,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
     // Tenta usar um método direto do repositório, se existir:
     // final isFav = await di.favoritesRepo.isFavorited(user.id, barcode);
-
+    //
     // Se não tiveres isFavorited(), dá para contornar assim:
     final favs = await di.favoritesRepo.list(user.id); // ou getAll(user.id)
     final isFav = favs.any((f) => f.barcode == barcode);
@@ -235,6 +382,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     setState(() => _favorited = isFav);
   }
 
+  /// Gera um label de base “efetiva” em função do número de porções,
+  /// para exibir ao utilizador.
+  ///
+  /// Exemplo:
+  /// - base "100 g", porções 1.5 → "150 g"
+  /// - base "1 porção", porções 2 → "2 porção"
+  /// - outros casos → "X × base" (multiplicador).
   String _effectiveBaseLabel(double portions) {
     final base = _baseLabel.trim().toLowerCase();
     final m = RegExp(r'(\d+(?:[.,]\d+)?)\s*(g|ml)\b').firstMatch(base);
@@ -260,6 +414,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     return '$mult × $_baseLabel';
   }
 
+  /// Inicializa os campos internos com os *fallbacks* passados no widget,
+  /// para garantir que a UI nunca fica completamente vazia, mesmo que
+  /// o fetch do produto falhe.
   void _hydrateWithFallback() {
     _name = widget.name ?? 'Produto';
     _brand = widget.brand ?? 'Marca';
@@ -278,6 +435,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     _sodium = widget.sodiumGPerBase ?? 0.16;
   }
 
+  /// Simula um “loading” visual do donut quando existe barcode
+  /// (para dar um pequeno feedback de carregamento ao utilizador).
   Future<void> _simulateLoadIfBarcode() async {
     if ((widget.barcode ?? '').isEmpty) return;
     setState(() => _loading = true);
@@ -292,12 +451,17 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     super.dispose();
   }
 
+  // ---------------------------------------------------------------------------
+  // Build principal
+  // ---------------------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     final topInset = MediaQuery.of(context).padding.top;
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
 
+    // Multiplicação dos valores nutricionais pela quantidade de porções
     final kcal = (_kcalBase * _portions).round();
     final protein = _p * _portions;
     final carbs = _c * _portions;
@@ -313,6 +477,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     final cKcal = carbs * 4;
     final fKcal = fat * 9;
     final totalMacroKcal = pKcal + cKcal + fKcal;
+
+    // Ajuste de escala para não “desalinhar” com o total exibido
     final scale = (totalMacroKcal > 0) ? (kcal / totalMacroKcal) : 1.0;
 
     final pKcalScaled = pKcal * scale;
@@ -327,7 +493,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         bottom: false,
         child: CustomScrollView(
           slivers: [
-            // HERO topo
+            // -----------------------------------------------------------------
+            // HERO topo (barra colorida com back + título + favoritos)
+            // -----------------------------------------------------------------
             SliverToBoxAdapter(
               child: Container(
                 padding: EdgeInsets.only(top: topInset),
@@ -361,8 +529,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             tooltip: _favoritedBusy
                                 ? "A processar..."
                                 : (_favorited
-                                      ? "Remover dos favoritos"
-                                      : "Adicionar aos favoritos"),
+                                    ? "Remover dos favoritos"
+                                    : "Adicionar aos favoritos"),
                             icon: Icon(
                               _favorited
                                   ? Icons.favorite_rounded
@@ -372,8 +540,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             onPressed: _favoritedBusy
                                 ? null
                                 : () async {
-                                    final user = await di.userRepo
-                                        .currentUser();
+                                    final user =
+                                        await di.userRepo.currentUser();
                                     if (user == null ||
                                         (widget.barcode ?? '').isEmpty) {
                                       return;
@@ -393,7 +561,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                     });
 
                                     if (!context.mounted) {
-                                      return; // <- protege o uso do BuildContext
+                                      return; // protege o uso do BuildContext
                                     }
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
@@ -414,6 +582,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 ),
               ),
             ),
+
+            // Curva separadora
             SliverToBoxAdapter(
               child: ClipPath(
                 clipper: _TopCurveClipper(),
@@ -421,7 +591,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               ),
             ),
 
-            // Card com nome + meta + NutriScore
+            // -----------------------------------------------------------------
+            // Card principal com nome + subtítulo + NutriScore
+            // -----------------------------------------------------------------
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               sliver: SliverToBoxAdapter(
@@ -438,7 +610,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               ),
             ),
 
-            // Donut + chips + controlos
+            // -----------------------------------------------------------------
+            // Donut de macros + chips + controlos de refeição/porções
+            // -----------------------------------------------------------------
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               sliver: SliverToBoxAdapter(
@@ -467,7 +641,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         ),
                       const SizedBox(height: 12),
 
-                      // Chips macro
+                      // Chips macro (P / C / G)
                       Row(
                         children: [
                           Expanded(
@@ -499,16 +673,19 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         ],
                       ),
 
-                      // Controles (se não for readOnly)
-                      // Controles (se não for readOnly)
+                      // Controles (apenas se não for readOnly)
                       if (!widget.readOnly) ...[
                         const SizedBox(height: 12),
+
+                        // Dropdown de refeição (escondido em modo edição freezeFromEntry)
                         if (!widget.freezeFromEntry)
                           _MealDropdown(
                             value: _selectedMeal,
                             onChanged: (v) => setState(() => _selectedMeal = v),
                           ),
                         if (!widget.freezeFromEntry) const SizedBox(height: 12),
+
+                        // Input de porções
                         _PortionInput(
                           controller: _portionCtrl,
                           baseLabel: effectiveLabel,
@@ -521,7 +698,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               ),
             ),
 
-            // Informação nutricional
+            // -----------------------------------------------------------------
+            // Informação nutricional adicional (tabela expansível)
+            // -----------------------------------------------------------------
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
               sliver: SliverToBoxAdapter(
@@ -560,7 +739,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         ),
       ),
 
-      // CTA — escondido quando readOnly
+      // -----------------------------------------------------------------------
+      // CTA final – adicionar ou guardar (escondido em readOnly)
+      // -----------------------------------------------------------------------
       bottomNavigationBar: widget.readOnly
           ? null
           : SafeArea(
@@ -571,25 +752,26 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   height: 52,
                   child: FilledButton(
                     onPressed: () async {
+                      // 1) garante utilizador
                       final user = await di.userRepo.currentUser();
                       final code = (widget.barcode ?? '').trim();
                       if (user == null) return;
 
-                      // Lê a base real da UI e calcula a quantidade final
+                      // 2) interpreta base e calcula quantidade final
                       final parsed = _parseBase();
                       final double quantity = (parsed.unit == 'PIECE')
                           ? (_portions <= 0 ? 1 : _portions) // nº de porções
                           : ((_portions <= 0 ? 1 : _portions) *
-                                parsed.base); // g ou ml finais
+                              parsed.base); // g/ml finais
 
-                      // ===== EDITAR =====
+                      // 3) MODO EDIÇÃO: atualizar item existente
                       if (widget.freezeFromEntry &&
                           (widget.existingMealItemId?.isNotEmpty ?? false)) {
                         await di.mealsRepo.updateMealItemQuantity(
                           widget.existingMealItemId!,
                           unit: parsed.unit, // 'GRAM' | 'ML' | 'PIECE'
                           quantity:
-                              quantity, //  ex.: 120.0 g   || 250.0 ml || 1.5 porções
+                              quantity, // ex.: 120.0 g || 250.0 ml || 1.5 porções
                         );
 
                         if (!context.mounted) return;
@@ -600,7 +782,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         return;
                       }
 
-                      // ===== ADICIONAR =====
+                      // 4) MODO ADIÇÃO: criar novo registo de refeição
                       await di.mealsRepo.addOrUpdateMealItem(
                         AddMealItemInput(
                           userId: user.id,
@@ -608,9 +790,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           mealType: _selectedMeal.name.toUpperCase(),
                           productBarcode: code,
                           customFoodId: null,
-                          unit: parsed.unit, // respeita base
+                          unit: parsed.unit, // respeita base (GRAM/ML/PIECE)
                           quantity:
-                              quantity, // calculado a partir do multiplicador × base
+                              quantity, // multiplicador × base calculado acima
                         ),
                       );
 
@@ -625,10 +807,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       Navigator.of(context).maybePop();
                     },
 
+                    // Label adapta-se ao modo:
+                    // - freezeFromEntry = true → "Guardar" (edição);
+                    // - normal            → "Adicionar ao <refeição>".
                     child: Text(
                       widget.freezeFromEntry
-                          ? "Guardar" // modo edição
-                          : "Adicionar ao ${_selectedMeal.labelPt}", // modo normal
+                          ? "Guardar"
+                          : "Adicionar ao ${_selectedMeal.labelPt}",
                     ),
                   ),
                 ),
@@ -637,7 +822,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     );
   }
 
-  // Helpers UI
+  // ---------------------------------------------------------------------------
+  // Helpers visuais (chips de macro)
+  // ---------------------------------------------------------------------------
+
+  /// Constrói um pequeno cartão para mostrar um valor de macro (ex.: proteína)
+  /// com um “ponto” colorido e o valor em texto.
   Widget _chipMetric(
     BuildContext context,
     String label,
@@ -689,6 +879,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
 /* =================== WIDGETS SECUNDÁRIOS =================== */
 
+/// Card com informação principal do produto (nome, subtítulo, NutriScore).
 class _InfoCard extends StatelessWidget {
   final String title;
   final String subtitle;
@@ -731,6 +922,7 @@ class _InfoCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Título + subtítulo (nome do produto, marca, etc.)
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -750,6 +942,8 @@ class _InfoCard extends StatelessWidget {
               ],
             ),
           ),
+
+          // Badge de NutriScore, se existir
           if ((nutriScore ?? "").isNotEmpty)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -774,6 +968,7 @@ class _InfoCard extends StatelessWidget {
   }
 }
 
+/// Dropdown de seleção de refeição (Pequeno-almoço/Almoço/Lanche/Jantar).
 class _MealDropdown extends StatelessWidget {
   final MealType value;
   final ValueChanged<MealType> onChanged;
@@ -818,6 +1013,7 @@ class _MealDropdown extends StatelessWidget {
   }
 }
 
+/// Input compacto para o número de porções/multiplicador da base.
 class _PortionInput extends StatelessWidget {
   final TextEditingController controller;
   final String baseLabel;
@@ -875,6 +1071,8 @@ class _PortionInput extends StatelessWidget {
   }
 }
 
+/// Container expansível para secções de informação extra (ex.: tabela
+/// nutricional).
 class _ExpandableInfo extends StatefulWidget {
   final String title;
   final String body;
@@ -891,6 +1089,7 @@ class _ExpandableInfo extends StatefulWidget {
 
 class _ExpandableInfoState extends State<_ExpandableInfo> {
   bool _open = true;
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -942,6 +1141,8 @@ class _ExpandableInfoState extends State<_ExpandableInfo> {
 
 /* =============== INFO NUTRICIONAL (tabela) =============== */
 
+/// Tabela de informação nutricional sumarizada para a quantidade atual
+/// (base multiplicada pelo número de porções).
 class _NutritionInfo extends StatelessWidget {
   final String baseLabel;
   final int kcal;
@@ -972,6 +1173,7 @@ class _NutritionInfo extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
 
+    // Linhas da tabela, incluindo apenas nutrientes presentes
     final rows = <_NutriRow>[
       _NutriRow("Energia", "$kcal kcal"),
       _NutriRow("Proteína", "${protein.toStringAsFixed(1)} g"),
@@ -983,7 +1185,8 @@ class _NutritionInfo extends StatelessWidget {
         _NutriRow("Gordura saturada", "${satFat!.toStringAsFixed(1)} g"),
       if (fiber != null) _NutriRow("Fibra", "${fiber!.toStringAsFixed(1)} g"),
       if (salt != null) _NutriRow("Sal", "${salt!.toStringAsFixed(2)} g"),
-      if (sodium != null) _NutriRow("Sódio", "${sodium!.toStringAsFixed(2)} g"),
+      if (sodium != null)
+        _NutriRow("Sódio", "${sodium!.toStringAsFixed(2)} g"),
     ];
 
     return Column(
@@ -1011,12 +1214,14 @@ class _NutritionInfo extends StatelessWidget {
   }
 }
 
+/// Linha de dados nutricionais (modelo simples para label + valor).
 class _NutriRow {
   final String label;
   final String value;
   _NutriRow(this.label, this.value);
 }
 
+/// Widget que desenha uma linha da tabela nutricional.
 class _NutriRowWidget extends StatelessWidget {
   final String label;
   final String value;
@@ -1056,6 +1261,12 @@ class _NutriRowWidget extends StatelessWidget {
 
 /* =================== DONUT (macros) =================== */
 
+/// Donut animado que representa a repartição das kcal entre:
+/// - proteína;
+/// - hidratos;
+/// - gordura.
+///
+/// O valor total exibido ao centro é `totalKcal`.
 class _MacroDonut extends StatelessWidget {
   const _MacroDonut({
     required this.totalKcal,
@@ -1106,6 +1317,7 @@ class _MacroDonut extends StatelessWidget {
   }
 }
 
+/// Badge central do donut com o total de kcal.
 class _KcalBig extends StatelessWidget {
   final int kcal;
   final double fontSize;
@@ -1150,6 +1362,7 @@ class _KcalBig extends StatelessWidget {
   }
 }
 
+/// Painter responsável por desenhar o donut de macros.
 class _DonutPainter extends CustomPainter {
   _DonutPainter({
     required this.progress,
@@ -1222,6 +1435,7 @@ class _DonutPainter extends CustomPainter {
 
 /* ========================= UTIL ========================= */
 
+/// Clipper que gera a curva de transição entre o header colorido e o body.
 class _TopCurveClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {

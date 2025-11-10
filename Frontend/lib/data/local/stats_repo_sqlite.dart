@@ -4,10 +4,28 @@ import '../../domain/repos.dart';
 import 'db.dart';
 import 'utils/dates.dart';
 
+/// NutriScore — Repositório de Estatísticas Diárias (SQLite/Drift)
+///
+/// Responsável por:
+/// - **Calcular** as estatísticas do dia (somatório de nutrientes das refeições);
+/// - **Ler** estatísticas previamente **em cache** (`DailyStats`);
+/// - **Guardar/atualizar** estatísticas no cache (`UPSERT`).
+///
+/// Convenções:
+/// - As datas de dia são normalizadas com [canonDayUtcIso] (formato ISO canónico UTC).
 class StatsRepoSqlite implements StatsRepo {
+  /// Base de dados local.
   final NutriDatabase db;
+
+  /// Construtor do repositório.
   StatsRepoSqlite(this.db);
 
+  /// Calcula as estatísticas de um **dia** com base nos itens de refeição,
+  /// persiste o resultado em `DailyStats` (cache) e devolve o modelo.
+  ///
+  /// - Agrega `kcal`, `protein`, `carb`, `fat`, `sugars`, `fiber`, `salt`
+  ///   somando todos os `MealItem` do utilizador nesse dia.
+  /// - Após calcular, faz [putCached] para manter o cache coerente.
   @override
   Future<DailyStatsModel> computeDaily(String userId, DateTime dayUtcCanon) async {
     final day = canonDayUtcIso(dayUtcCanon);
@@ -41,6 +59,9 @@ class StatsRepoSqlite implements StatsRepo {
     return model;
   }
 
+  /// Lê do **cache** (`DailyStats`) as estatísticas para o [userId] e dia dado.
+  ///
+  /// - Devolve `null` se não existir linha em `DailyStats` para esse dia.
   @override
   Future<DailyStatsModel?> getCached(String userId, DateTime dayUtcCanon) async {
     final day = canonDayUtcIso(dayUtcCanon);
@@ -64,6 +85,10 @@ class StatsRepoSqlite implements StatsRepo {
     );
   }
 
+  /// Faz **UPSERT** do modelo [stats] em `DailyStats`.
+  ///
+  /// - Se existir `(userId, date)`, atualiza os campos e `updatedAt`;
+  /// - Caso contrário, insere uma nova linha.
   @override
   Future<void> putCached(DailyStatsModel stats) async {
     await db.customStatement('''

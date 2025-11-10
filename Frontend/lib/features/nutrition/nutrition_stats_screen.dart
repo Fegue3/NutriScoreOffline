@@ -5,32 +5,91 @@ import 'package:flutter/material.dart';
 import '../../app/di.dart';
 import '../../core/theme.dart' show AppColors;
 
-/// NutriScore – NutritionStatsScreen (UI sem chamadas diretas a backend)
-/// - Pie de calorias por refeição (CustomPaint)
-/// - Cartão de macros com progress bars
-/// - Usa repos de DI para metas e estatísticas
-
+/// NutriScore — NutritionStatsScreen
+///
+/// Ecrã de **estatísticas de nutrição** por dia, complementar ao Diário.
+///
+/// Mostra:
+/// - distribuição de calorias por refeição (gráfico circular / “pie”);
+/// - totais e metas diárias de calorias;
+/// - progresso dos principais macronutrientes:
+///   - proteína, hidratos, gordura (com metas derivadas das calorias diárias);
+/// - outros nutrientes de saúde pública:
+///   - açúcares, fibra, sal (com metas fixas básicas).
+///
+/// Fontes de dados (através de DI):
+/// - `userRepo`  → utilizador atual;
+/// - `goalsRepo` → metas diárias (kcal + percentagens de macros);
+/// - `statsRepo` → totais agregados de macros e nutrientes por dia;
+/// - `mealsRepo` → calorias agregadas por refeição.
+///
+/// Navegação temporal:
+/// - `_dayOffset` controla o dia visível:
+///   - `0`  → hoje;
+///   - `-1` → ontem;
+///   - `1`  → amanhã;
+/// - botões de “seta” avançam/recém dias;
+/// - `RefreshIndicator` permite voltar a carregar os dados do dia atual.
 class NutritionStatsScreen extends StatefulWidget {
   const NutritionStatsScreen({super.key});
+
   @override
   State<NutritionStatsScreen> createState() => _NutritionStatsScreenState();
 }
 
+/// Estado do [NutritionStatsScreen].
+///
+/// Responsabilidades:
+/// - gerir o deslocamento de dia ([ _dayOffset ]);
+/// - carregar metas de calorias e macros a partir do `goalsRepo`;
+/// - carregar estatísticas de macros e micronutrientes do `statsRepo`;
+/// - calcular calorias por refeição recorrendo ao `mealsRepo`;
+/// - expor valores agregados para os *cards* de UI:
+///   - [_CaloriesMealsPieCard] para o pie das refeições;
+///   - [_MacroSectionCard] para barras de progresso de macros/nutrientes.
 class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
-  int _dayOffset = 0; // 0=hoje, -1=ontem, 1=amanhã…
+  /// Offset em dias relativamente a hoje.
+  ///
+  /// - `0`  → hoje;
+  /// - `-1` → ontem;
+  /// - `1`  → amanhã.
+  int _dayOffset = 0;
 
-  // ===== Metas (preenchidas a partir do GoalsRepo)
+  // ---------------------------------------------------------------------------
+  // Metas (preenchidas a partir do GoalsRepo)
+  // ---------------------------------------------------------------------------
+
+  /// Meta diária de calorias (kcal), vinda de `goalsRepo.dailyCalories`.
   int kcalTarget = 0;
+
+  /// Meta diária de proteína (g), calculada a partir da percentagem
+  /// de proteína e da meta de calorias.
   double proteinTargetG = 0;
+
+  /// Meta diária de hidratos de carbono (g), calculada a partir da
+  /// percentagem de hidratos e da meta de calorias.
   double carbTargetG = 0;
+
+  /// Meta diária de gordura (g), calculada a partir da percentagem de
+  /// gordura e da meta de calorias.
   double fatTargetG = 0;
 
-  // Limites “saúde pública” (mantém defaults caso não tenhas outros)
+  /// Limite de referência para açúcares (g) — “regra de bolso”.
   double sugarsTargetG = 50;
+
+  /// Limite de referência para fibra (g) — “regra de bolso”.
   double fiberTargetG = 30;
+
+  /// Limite de referência para sal (g) — “regra de bolso”.
   double saltTargetG = 5;
 
-  // ===== Dados do dia (vindos de stats/meals)
+  // ---------------------------------------------------------------------------
+  // Dados do dia (vindos de stats/meals)
+  // ---------------------------------------------------------------------------
+
+  /// Mapa com calorias totais por slot de refeição do dia.
+  ///
+  /// Inicializado a zero para todas as refeições.
   Map<MealSlot, double> _kcalByMeal = const {
     MealSlot.breakfast: 0,
     MealSlot.lunch: 0,
@@ -38,6 +97,7 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
     MealSlot.dinner: 0,
   };
 
+  /// Totais diários de macronutrientes (g) e micronutrientes (g).
   double proteinG = 0;
   double carbG = 0;
   double fatG = 0;
@@ -45,14 +105,35 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
   double fiberG = 0;
   double saltG = 0;
 
+  /// Flag de carregamento:
+  /// - `true`  → a aguardar dados;
+  /// - `false` → dados prontos (ou falha silenciosa).
   bool _loading = true;
 
+  // ---------------------------------------------------------------------------
+  // Ciclo de vida
+  // ---------------------------------------------------------------------------
+
+  /// Inicializa o estado carregando imediatamente as estatísticas de hoje.
   @override
   void initState() {
     super.initState();
     _loadForOffset(0);
   }
 
+  // ---------------------------------------------------------------------------
+  // Helpers de data / navegação
+  // ---------------------------------------------------------------------------
+
+  /// Gera um rótulo amigável para o dia atual de `_dayOffset`.
+  ///
+  /// Casos especiais:
+  /// - `0`  → "Hoje";
+  /// - `-1` → "Ontem";
+  /// - `1`  → "Amanhã".
+  ///
+  /// Para outros offsets, usa `MaterialLocalizations.formatMediumDate`
+  /// para gerar uma data localizada.
   String _labelFor(BuildContext ctx) {
     if (_dayOffset == 0) return 'Hoje';
     if (_dayOffset == -1) return 'Ontem';
@@ -61,14 +142,42 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
     return MaterialLocalizations.of(ctx).formatMediumDate(d);
   }
 
+  /// Soma total de calorias do dia considerando todos os slots de refeição.
   double get _totalKcal =>
       _kcalByMeal.values.fold<double>(0, (a, b) => a + b);
 
+  /// Avança/recuar o dia em [delta] dias.
+  ///
+  /// - Se [delta] for `0`, não faz nada;
+  /// - Caso contrário, delega em [_loadForOffset] com o novo offset.
   void _go(int delta) {
     if (delta == 0) return;
     _loadForOffset(_dayOffset + delta);
   }
 
+  // ---------------------------------------------------------------------------
+  // Carregamento de dados
+  // ---------------------------------------------------------------------------
+
+  /// Carrega metas e estatísticas para o dia correspondente ao offset [off].
+  ///
+  /// Fluxo:
+  /// 1. Atualiza `_dayOffset` e liga `_loading = true` com `setState`;
+  /// 2. Obtém o utilizador atual via `userRepo.currentUser()`:
+  ///    - se `null`, desliga apenas `_loading`;
+  /// 3. Lê metas em `goalsRepo.getByUser(u.id)`:
+  ///    - preenche [kcalTarget];
+  ///    - se `kcalTarget > 0`, calcula metas de macros:
+  ///      - proteína/hidratos: `4 kcal/g`;
+  ///      - gordura: `9 kcal/g`;
+  ///    - se não houver metas, zera alvos de macros;
+  /// 4. Calcula a data canónica do dia (UTC + offset);
+  /// 5. Lê estatísticas do `statsRepo`:
+  ///    - tenta `getCached` primeiro;
+  ///    - se `null`, calcula com `computeDaily`;
+  /// 6. Atualiza totais de macros e nutrientes (g);
+  /// 7. Lê refeições do `mealsRepo` e agrega calorias por tipo;
+  /// 8. Finalmente, desliga `_loading` (se montado).
   Future<void> _loadForOffset(int off) async {
     setState(() {
       _dayOffset = off;
@@ -140,12 +249,24 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
         MealSlot.dinner: d,
       };
     } catch (_) {
-      // opcional: snack/erro
+      // opcional: log/snack de erro
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Construção do UI
+  // ---------------------------------------------------------------------------
+
+  /// Constrói toda a estrutura de UI:
+  ///
+  /// - `AppBar` com título "Nutrição";
+  /// - cabeçalho roxo/verde com navegação entre dias;
+  /// - `RefreshIndicator` para recarregar estatísticas do dia atual;
+  /// - lista com dois *cards* principais:
+  ///   - [_CaloriesMealsPieCard] → distribuição de calorias por refeição;
+  ///   - [_MacroSectionCard]     → barras de progresso de macros/nutrientes.
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -270,9 +391,19 @@ class _NutritionStatsScreenState extends State<NutritionStatsScreen> {
 
 /* ============================ MODELOS LOCAIS ============================ */
 
+/// Slot de refeição para agregação de calorias no gráfico de pie.
+///
+/// Representa as quatro refeições principais do dia:
+/// - [MealSlot.breakfast] → pequeno-almoço;
+/// - [MealSlot.lunch]     → almoço;
+/// - [MealSlot.snack]     → lanche;
+/// - [MealSlot.dinner]    → jantar.
 enum MealSlot { breakfast, lunch, snack, dinner }
 
+/// Extensão de conveniência para obter o rótulo PT de cada [MealSlot].
 extension MealSlotLabel on MealSlot {
+  /// Rótulo de UI para o slot de refeição:
+  /// - "Pequeno-almoço", "Almoço", "Lanche", "Jantar".
   String get label {
     switch (this) {
       case MealSlot.breakfast:
@@ -289,9 +420,23 @@ extension MealSlotLabel on MealSlot {
 
 /* ============================ PIE DE REFEIÇÕES ============================ */
 
+/// Card com o gráfico circular de **calorias por refeição**.
+///
+/// Mostra:
+/// - pie principal desenhado por [_MealsPie] / [_PiePainter];
+/// - legenda com:
+///   - rótulo de refeição;
+///   - calorias por refeição;
+///   - percentagem da refeição face ao total;
+/// - totais e meta de calorias na parte inferior.
 class _CaloriesMealsPieCard extends StatelessWidget {
+  /// Mapa de calorias por refeição.
   final Map<MealSlot, double> kcalByMeal;
+
+  /// Total de calorias do dia.
   final double totalKcal;
+
+  /// Meta diária de calorias.
   final double goalKcal;
 
   const _CaloriesMealsPieCard({
@@ -305,6 +450,7 @@ class _CaloriesMealsPieCard extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
 
+    // Filtra apenas slots com valor > 0 para mostrar no gráfico/legenda.
     final entries = MealSlot.values
         .map((s) => MapEntry(s, kcalByMeal[s] ?? 0))
         .where((e) => e.value > 0)
@@ -332,7 +478,7 @@ class _CaloriesMealsPieCard extends StatelessWidget {
             aspectRatio: 1.6,
             child: Row(
               children: [
-                // Pie
+                // Gráfico circular
                 Expanded(
                   flex: 11,
                   child: Center(
@@ -352,7 +498,7 @@ class _CaloriesMealsPieCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                // Legenda
+                // Legenda e totais
                 Expanded(
                   flex: 13,
                   child: Column(
@@ -367,9 +513,11 @@ class _CaloriesMealsPieCard extends StatelessWidget {
                           AppColors.warmTangerine,
                           AppColors.goldenAmber,
                         ][idx % 4];
+
                         final int pct = totalKcal <= 0
                             ? 0
                             : ((e.value / totalKcal) * 100).round();
+
                         return Padding(
                           padding: const EdgeInsets.symmetric(vertical: 4),
                           child: Row(
@@ -450,6 +598,12 @@ class _CaloriesMealsPieCard extends StatelessWidget {
   }
 }
 
+/// Wrapper que configura o [CustomPaint] para o pie de refeições.
+///
+/// Recebe:
+/// - [data]: lista de (slot, kcal) já filtrados;
+/// - [palette]: paleta de cores usada ciclicamente;
+/// - [background]: cor da “trilha” de fundo.
 class _MealsPie extends StatelessWidget {
   final List<MapEntry<MealSlot, double>> data;
   final List<Color> palette;
@@ -479,10 +633,24 @@ class _MealsPie extends StatelessWidget {
   }
 }
 
+/// *CustomPainter* responsável por desenhar o pie de refeições.
+///
+/// Estratégia:
+/// - desenha primeiro um círculo de “trilha” a `360º` com a cor [background];
+/// - se [sum] ≤ 0, pára aqui (sem dados);
+/// - caso contrário, desenha segmentos de arco em volta, um por valor,
+///   com largura constante e cores vindas de [colors].
 class _PiePainter extends CustomPainter {
+  /// Valores numéricos de cada fatia (ex.: kcal por refeição).
   final List<double> values;
+
+  /// Cores usadas para cada fatia (mesmo comprimento de [values]).
   final List<Color> colors;
+
+  /// Soma total dos valores (usada para calcular a percentagem).
   final double sum;
+
+  /// Cor de fundo da trilha do gráfico.
   final Color background;
 
   _PiePainter({
@@ -498,16 +666,17 @@ class _PiePainter extends CustomPainter {
     final center = rect.center;
     final radius = math.min(size.width, size.height) / 2;
 
+    // Largura da “linha” do pie e raio efetivo.
     final railStroke = radius * 0.30;
     final arcRadius = radius * 0.72;
 
+    // Trilha de fundo (círculo completo).
     final bgPaint = Paint()
       ..color = background
       ..style = PaintingStyle.stroke
       ..strokeWidth = railStroke
       ..strokeCap = StrokeCap.butt;
 
-    // trilho
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: arcRadius),
       -math.pi / 2,
@@ -518,6 +687,7 @@ class _PiePainter extends CustomPainter {
 
     if (sum <= 0) return;
 
+    // Fatias de dados.
     double start = -math.pi / 2;
     for (int i = 0; i < values.length; i++) {
       final double v = values[i] <= 0 ? 0.0 : values[i];
@@ -552,6 +722,20 @@ class _PiePainter extends CustomPainter {
 
 /* ============================ CARD DE MACROS ============================ */
 
+/// Card com o resumo de calorias e barras de progresso de macros/nutrientes.
+///
+/// Conteúdo:
+/// - chips de calorias:
+///   - “kcal usados”;
+///   - “meta kcal”;
+/// - secção de macros principais:
+///   - proteína, hidratos, gordura;
+/// - secção de “outros nutrientes” com limites mais gerais:
+///   - açúcares, fibra, sal.
+///
+/// Cada linha de nutriente é renderizada por [meter], que:
+/// - mostra um `LinearProgressIndicator` proporcional ao valor/target;
+/// - apresenta o valor atual e o alvo em texto.
 class _MacroSectionCard extends StatelessWidget {
   final int kcalUsed;
   final int kcalTarget;
@@ -595,6 +779,14 @@ class _MacroSectionCard extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
 
+    /// Constrói uma linha de “medidor” (barra + valores) para um nutriente.
+    ///
+    /// Parâmetros:
+    /// - [title]  → rótulo do nutriente (ex.: "Proteína");
+    /// - [value]  → valor atual em gramas;
+    /// - [target] → meta em gramas (evita 0 → assume 1 para não dividir por 0);
+    /// - [color]  → cor da barra de progresso (default: `primary`);
+    /// - [unit]   → unidade de texto (por omissão `'g'`).
     Widget meter({
       required String title,
       required double value,
@@ -670,7 +862,11 @@ class _MacroSectionCard extends StatelessWidget {
           const SizedBox(height: 8),
           Row(
             children: [
-              _chip('$kcalUsed kcal usados', AppColors.freshGreen, Colors.white),
+              _chip(
+                '$kcalUsed kcal usados',
+                AppColors.freshGreen,
+                Colors.white,
+              ),
               const SizedBox(width: 8),
               _chip(
                 'meta $kcalTarget kcal',
@@ -735,6 +931,12 @@ class _MacroSectionCard extends StatelessWidget {
     );
   }
 
+  /// Constrói um pequeno *chip* visual com texto.
+  ///
+  /// Parâmetros:
+  /// - [text] → conteúdo textual (ex.: "kcal usados");
+  /// - [bg]   → cor de fundo do chip;
+  /// - [fg]   → cor do texto.
   Widget _chip(String text, Color bg, Color fg) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),

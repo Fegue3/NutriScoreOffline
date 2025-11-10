@@ -1,26 +1,64 @@
 // lib/core/theme.dart
 import 'package:flutter/material.dart';
 
+/// NutriScore — Tema e Design System (Core)
+///
+/// Define:
+/// - **Paleta de cores** do projeto ([AppColors]);
+/// - **Tipografia** e hierarquia de texto ([AppText]);
+/// - **Formas** e raios padrão ([AppShapes]);
+/// - **ThemeData** Material 3 para o tema claro ([NutriTheme.light]).
+///
+/// Regras principais (NutriScore DS):
+/// - **Fresh Green** para CTAs principais; **Warm Tangerine** como acento/CTA secundário;
+/// - **Ripe Red** reservado a erros/estados destrutivos (não usar como fundo);
+/// - Tipos: *Nunito Sans* (títulos), *Inter* (corpo), *Roboto Mono* (números/dados);
+/// - Espaçamentos, raios e sombras consistentes com cartões e botões *pill*.
 class AppColors {
   // Primary
+  /// Cor principal — ações/CTAs, confirmações.
   static const freshGreen = Color(0xFF4CAF6D);
+  /// Acento/CTA secundário — destaques.
   static const warmTangerine = Color(0xFFFF8A4C);
+  /// Sucesso/progresso.
   static const leafyGreen = Color(0xFF66BB6A);
+  /// Avisos/alertas suaves.
   static const goldenAmber = Color(0xFFFFC107);
+  /// Erros/ações destrutivas.
   static const ripeRed = Color(0xFFE53935);
 
   // Neutrals
+  /// Texto principal.
   static const charcoal = Color(0xFF333333);
+  /// Texto secundário.
   static const coolGray = Color(0xFF666666);
+  /// Fundo global da app.
   static const softOffWhite = Color(0xFFFAFAF7);
+  /// Fundo de cartões/sections.
   static const lightSage = Color(0xFFE8F5E9);
 }
 
+/// Tipografia oficial do NutriScore.
+/// - Títulos: **Nunito Sans**
+/// - Corpo: **Inter**
+/// - Dados/Números: **Roboto Mono**
 class AppText {
+  /// Família de títulos (headings).
   static const String headingsFamily = 'Nunito Sans';
+  /// Família de corpo (texto geral).
   static const String bodyFamily = 'Inter';
+  /// Família monoespaçada para métricas.
   static const String numericFamily = 'Roboto Mono';
 
+  /// Tema de texto base com hierarquia alinhada ao Design System.
+  ///
+  /// Notas:
+  /// - `displaySmall` mapeado ao H1 (32, Bold);
+  /// - `headlineMedium` ao H2 (24, SemiBold);
+  /// - `titleLarge` ao H3 (20, Medium);
+  /// - `bodyLarge` corpo (16, Regular);
+  /// - `bodyMedium` pequeno (14, Regular);
+  /// - `labelSmall` caption/labels (12, Medium).
   static TextTheme textTheme = TextTheme(
     // H1 – 32 / bold / 120%
     displaySmall: const TextStyle(
@@ -76,6 +114,7 @@ class AppText {
     displayColor: AppColors.charcoal,
   );
 
+  /// Estilo monoespaçado recomendado para **métricas** (calorias, macros).
   static const TextStyle numeric = TextStyle(
     fontFamily: numericFamily,
     fontSize: 18,
@@ -85,17 +124,25 @@ class AppText {
   );
 }
 
+/// Formas e raios padrão (cartões, botões *pill*).
 class AppShapes {
+  /// Raio de cartões/containers.
   static const radius16 = 16.0;
+  /// Raio para *pills* (botões arredondados).
   static const pill24 = 24.0;
 
+  /// Forma padrão de cartões.
   static final cardShape =
       RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius16));
+  /// Forma *pill* (por ex., botões).
   static final pillShape =
       RoundedRectangleBorder(borderRadius: BorderRadius.circular(pill24));
 }
 
-// Helper para estados (WidgetState/WidgetStateProperty)
+/// Helper genérico para `WidgetStateProperty.resolveWith`.
+///
+/// Devolve [pressed] quando o estado inclui `pressed` ou `focused`,
+/// caso contrário [normal].
 T _resolve<T>(Set<WidgetState> states, T normal, T pressed) {
   if (states.contains(WidgetState.pressed) || states.contains(WidgetState.focused)) {
     return pressed;
@@ -103,8 +150,13 @@ T _resolve<T>(Set<WidgetState> states, T normal, T pressed) {
   return normal;
 }
 
+/// Construtor do `ThemeData` Material 3 (tema claro) do NutriScore.
+///
+/// Define `ColorScheme`, tipografia, AppBar, Cards, botões (CTA/Secondary/Ghost),
+/// FAB, barra de navegação inferior, *inputs*, *snackbars* e indicadores.
 class NutriTheme {
   // usa final para evitar aviso do linter
+  /// Esquema de cores base (Material 3).
   static final ColorScheme _scheme = const ColorScheme(
     brightness: Brightness.light,
     primary: AppColors.freshGreen,
@@ -134,6 +186,7 @@ class NutriTheme {
     surfaceContainerLowest: AppColors.softOffWhite,
   );
 
+  /// Tema claro principal do NutriScore.
   static ThemeData get light {
     return ThemeData(
       useMaterial3: true,
@@ -232,7 +285,7 @@ class NutriTheme {
         elevation: 6,
       ),
 
-      // Bottom Navigation — fundo semitransparente, ativo verde, inativo cinza
+      // Bottom Navigation — fundo semitransparente, ativo verde, inativo cinzento
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: const Color(0xEEFFFFFF),
         indicatorColor: AppColors.freshGreen.withAlpha(31), // ~0.12
@@ -271,10 +324,12 @@ class NutriTheme {
         ),
       ),
 
+      // Indicadores de progresso (circulares/lineares).
       progressIndicatorTheme: const ProgressIndicatorThemeData(
         color: AppColors.leafyGreen,
       ),
 
+      // Snackbars padrão flutuantes.
       snackBarTheme: const SnackBarThemeData(
         backgroundColor: AppColors.freshGreen,
         contentTextStyle: TextStyle(fontFamily: AppText.bodyFamily, color: Colors.white),

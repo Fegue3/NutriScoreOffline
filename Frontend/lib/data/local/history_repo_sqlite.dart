@@ -3,11 +3,29 @@ import '../../domain/repos.dart';
 import '../../domain/models.dart';
 import 'db.dart';
 
+/// NutriScore — Repositório de Histórico de Produtos (SQLite/Drift)
+///
+/// Guarda os **scans/consultas de produtos** por utilizador, evitando duplicados
+/// consecutivos e permitindo listar com paginação e janelas temporais.
+///
+/// Funcionalidades:
+/// - `_upsertProductBasic` garante que existe linha em `Product` (nome/marca)
+///   para enriquecer o JOIN da listagem, **sem alterar o schema**;
+/// - `addIfNotDuplicateWithProduct` regista entrada evitando duplicar o **mesmo
+///   barcode imediatamente anterior**, recebendo opcionalmente metadados do produto;
+/// - `addIfNotDuplicate` (implementação da interface) idem, com `HistorySnapshot`;
+/// - `list` suporta **página/tamanho**, e filtros `fromIso`/`toIso` em `scannedAt`.
 class HistoryRepoSqlite implements HistoryRepo {
+  /// Base de dados local.
   final NutriDatabase db;
+
+  /// Constrói o repositório de histórico.
   HistoryRepoSqlite(this.db);
 
-  // tem name/brand antes de inserir histórico (não altera schema).
+  /// Faz *upsert* mínimo em `Product` (barcode + nome/marca se disponíveis).
+  ///
+  /// Útil para garantir que a listagem com `LEFT JOIN Product` tem algo para mostrar,
+  /// mesmo quando o produto ainda não foi sincronizado na totalidade.
   Future<void> _upsertProductBasic({
     required String barcode,
     String? name,
@@ -22,6 +40,12 @@ class HistoryRepoSqlite implements HistoryRepo {
     ''', [barcode, name, brand]);
   }
 
+  /// Adiciona ao histórico **se não for duplicado consecutivo**, com metadados opcionais.
+  ///
+  /// Regras:
+  /// - Obtém o **último** barcode do utilizador; se igual ao recebido, **não regista**;
+  /// - Faz `_upsertProductBasic` para enriquecer a listagem;
+  /// - Insere entrada com `datetime('now')`.
   Future<void> addIfNotDuplicateWithProduct(
     String userId, {
     required String barcode,
@@ -59,6 +83,7 @@ class HistoryRepoSqlite implements HistoryRepo {
     );
   }
 
+  /// Implementação padrão: adiciona ao histórico **se não for duplicado consecutivo**.
   @override
   Future<void> addIfNotDuplicate(String userId, HistorySnapshot s) async {
     // Evita repetir o mesmo barcode imediatamente anterior
@@ -86,6 +111,16 @@ class HistoryRepoSqlite implements HistoryRepo {
     );
   }
 
+  /// Lista entradas do histórico do [userId].
+  ///
+  /// Parâmetros:
+  /// - [page]: página (1-based), por omissão `1`;
+  /// - [pageSize]: tamanho da página, por omissão `20`;
+  /// - [fromIso]/[toIso]: intervalos opcionais (ISO-8601) aplicados a `scannedAt`.
+  ///
+  /// Notas:
+  /// - `LEFT JOIN Product` para obter `name/brand` se disponíveis;
+  /// - Ordena por `scannedAt DESC`.
   @override
   Future<List<HistoryEntry>> list(
     String userId, {

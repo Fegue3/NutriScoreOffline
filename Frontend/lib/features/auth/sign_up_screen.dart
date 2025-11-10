@@ -3,18 +3,43 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../app/di.dart';
 
+/// Ecrã de **registo de utilizador** (Sign Up).
+///
+/// Responsabilidades:
+/// - Apresentar formulário com *nome opcional*, *email* e *palavra-passe*;
+/// - Validar localmente os campos (form `FormState`);
+/// - Criar uma conta via `di.userRepo.signUp(...)`;
+/// - Mostrar mensagem de erro em `SnackBar` quando aplicável;
+/// - Redirecionar para `/onboarding` após sucesso (continuação do fluxo inicial).
+///
+/// Detalhes de UX/A11y:
+/// - Botão para alternar visibilidade da palavra-passe;
+/// - Estados de carregamento desativam ações e mostram *spinner*;
+/// - `SingleChildScrollView` para ecrãs pequenos; *card* com sombra suave.
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
+
   @override
   State<SignUpScreen> createState() => _SignUpScreenState();
 }
 
 class _SignUpScreenState extends State<SignUpScreen> {
+  /// *Key* do formulário para validação e submissão.
   final _formKey = GlobalKey<FormState>();
+
+  /// Campo opcional de nome próprio/identificação.
   final _name = TextEditingController();
+
+  /// Campo de email.
   final _email = TextEditingController();
+
+  /// Campo de palavra-passe.
   final _password = TextEditingController();
+
+  /// Estado de carregamento durante a submissão.
   bool _loading = false;
+
+  /// Controla a visibilidade do texto da palavra-passe.
   bool _obscure = true;
 
   @override
@@ -25,6 +50,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
     super.dispose();
   }
 
+  /// Submissão do formulário:
+  /// 1) Validação local;
+  /// 2) `userRepo.signUp(...)` com *name* opcional normalizado;
+  /// 3) Tratamento de erros conhecidos (ex.: *email duplicado*);
+  /// 4) Navegação para `/onboarding` se tudo correr bem.
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
@@ -37,7 +67,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
         name: _name.text.trim().isEmpty ? null : _name.text.trim(),
       );
     } catch (e) {
-      debugPrint('SignUp error: $e'); // vê no console
+      debugPrint('SignUp error: $e'); // logging para diagnóstico
       error = e.toString().contains('UNIQUE')
           ? 'Email já registado.'
           : 'Não foi possível criar a conta.';
@@ -47,16 +77,20 @@ class _SignUpScreenState extends State<SignUpScreen> {
     setState(() => _loading = false);
 
     if (error != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
       return;
     }
 
-    // segue para onboarding
+    // Continuação do fluxo (definição de metas / onboarding)
     GoRouter.of(context).go('/onboarding');
   }
 
+  /// Cria uma decoração consistente para os `TextFormField` deste ecrã.
+  ///
+  /// Parâmetros:
+  /// - [label] rótulo do campo (obrigatório);
+  /// - [hint]  ajuda no *placeholder* (opcional);
+  /// - [suffix] *widget* de sufixo (ex.: ícone para mostrar/ocultar palavra-passe).
   InputDecoration _inputDecoration({
     required String label,
     String? hint,
@@ -112,15 +146,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // Cabeçalho / marca
                   Padding(
                     padding: const EdgeInsets.only(bottom: 24),
                     child: Column(
                       children: [
-                        Image.asset(
-                          'assets/utils/icon.png',
-                          width: 256,
-                          height: 256,
-                        ),
+                        Image.asset('assets/utils/icon.png', width: 256, height: 256),
                         const SizedBox(height: 12),
                         Text(
                           'Criar conta',
@@ -139,6 +170,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       ],
                     ),
                   ),
+
+                  // Cartão com o formulário
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(16),
@@ -157,6 +190,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       key: _formKey,
                       child: Column(
                         children: [
+                          // Nome (opcional)
                           TextFormField(
                             controller: _name,
                             textInputAction: TextInputAction.next,
@@ -165,6 +199,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
+
+                          // Email
                           TextFormField(
                             controller: _email,
                             textInputAction: TextInputAction.next,
@@ -173,32 +209,30 @@ class _SignUpScreenState extends State<SignUpScreen> {
                               label: 'Email',
                               hint: 'nome@dominio.com',
                             ),
-                            validator: (v) => (v == null || !v.contains('@'))
-                                ? 'Email inválido'
-                                : null,
+                            validator: (v) =>
+                                (v == null || !v.contains('@')) ? 'Email inválido' : null,
                           ),
                           const SizedBox(height: 16),
+
+                          // Palavra-passe
                           TextFormField(
                             controller: _password,
                             obscureText: _obscure,
                             decoration: _inputDecoration(
                               label: 'Palavra-passe',
                               suffix: IconButton(
-                                onPressed: () =>
-                                    setState(() => _obscure = !_obscure),
-                                icon: Icon(
-                                  _obscure
-                                      ? Icons.visibility
-                                      : Icons.visibility_off,
-                                ),
+                                onPressed: () => setState(() => _obscure = !_obscure),
+                                icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
                                 color: cs.outline,
                               ),
                             ),
-                            validator: (v) => (v == null || v.length < 6)
-                                ? 'Mínimo 6 caracteres'
-                                : null,
+                            validator: (v) =>
+                                (v == null || v.length < 6) ? 'Mínimo 6 caracteres' : null,
                           ),
+
                           const SizedBox(height: 16),
+
+                          // Botão Registar
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton(
@@ -218,14 +252,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                   ? const SizedBox(
                                       width: 18,
                                       height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
+                                      child: CircularProgressIndicator(strokeWidth: 2),
                                     )
                                   : const Text('Registar'),
                             ),
                           ),
+
                           const SizedBox(height: 14),
+
+                          // Link para Entrar
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
@@ -240,13 +275,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                 onPressed: () => context.go('/login'),
                                 style: TextButton.styleFrom(
                                   foregroundColor: cs.secondary,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 10,
-                                  ),
-                                  textStyle: tt.bodyMedium?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                  textStyle: tt.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
                                 ),
                                 child: const Text('Entrar'),
                               ),

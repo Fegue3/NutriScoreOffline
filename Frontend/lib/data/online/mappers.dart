@@ -2,6 +2,8 @@ import 'dart:convert';
 import '../../domain/models.dart';
 import 'dto.dart';
 
+/// Utilitário: converte dinamicamente para `int?`.
+/// Aceita `int`, `double`, `num` ou `String` (via `int.tryParse`).
 int? _toInt(dynamic v) {
   if (v == null) return null;
   if (v is int) return v;
@@ -11,6 +13,8 @@ int? _toInt(dynamic v) {
   return null;
 }
 
+/// Utilitário: converte dinamicamente para `double?`.
+/// Aceita `num` diretamente ou `String` (via `double.tryParse`).
 double? _toDouble(dynamic v) {
   if (v == null) return null;
   if (v is num) return v.toDouble();
@@ -18,6 +22,17 @@ double? _toDouble(dynamic v) {
   return null;
 }
 
+/// Mapeia um [OffProductDto] (DTO vindo do OFF) para o **modelo de domínio** [ProductModel].
+///
+/// Regras e cuidados:
+/// - `id` fica vazio (`''`) para permitir que o repositório local gere um UUID se necessário;
+/// - `name`: se vier vazio, utiliza o **barcode** como fallback (garante um nome não vazio);
+/// - `brand` é normalizada com `trim()` (pode ser `null`);
+/// - Nutrimentos:
+///   - Energia procura primeiro `energy-kcal_100g`, depois `energy-kcal_100g_estimated`,
+///     e por fim `energy-kcal` (alguns produtos antigos usam variantes);
+///   - Hidratos aceita `carbohydrates_100g` ou o alias `carbs_100g`;
+///   - Restantes campos seguem as chaves canónicas do OFF (`*_100g`).
 ProductModel dtoToProductModel(OffProductDto d) {
   final n = d.nutriments ?? const {};
 
@@ -36,6 +51,10 @@ ProductModel dtoToProductModel(OffProductDto d) {
   );
 }
 
+/// Serializa o bloco `nutriments` de um [OffProductDto] para JSON (`String`).
+///
+/// - Devolve `null` se `nutriments` for `null`;
+/// - Caso exista, retorna `jsonEncode(n)` sem transformação adicional.
 String? nutrimentsToJson(OffProductDto d) {
   final n = d.nutriments;
   if (n == null) return null;

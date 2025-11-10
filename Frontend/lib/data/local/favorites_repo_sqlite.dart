@@ -3,11 +3,28 @@ import '../../domain/models.dart';
 import '../../domain/repos.dart';
 import 'db.dart';
 
+/// NutriScore — Repositório de Favoritos (SQLite/Drift)
+///
+/// Implementação local de [FavoritesRepo] baseada em SQLite (via Drift).
+/// Responsável por:
+/// - Marcar/desmarcar produtos como favoritos por utilizador;
+/// - Listar favoritos com paginação e pesquisa;
+/// - Garantir que existe uma linha mínima em `Product` (via [_upsertProductBasic])
+///   quando a UI já conhece `barcode`/`name`/`brand` (evita *joins* vazios).
 class FavoritesRepoSqlite implements FavoritesRepo {
+  /// Instância da base de dados local.
   final NutriDatabase db;
+
+  /// Cria o repositório de favoritos SQLite.
   FavoritesRepoSqlite(this.db);
 
   // ---------------------------------------------------------------------------
+
+  /// Faz *upsert* básico de um produto em `Product` para assegurar integridade
+  /// de chaves quando marcamos como favorito um produto ainda não sincronizado.
+  ///
+  /// - Usa `INSERT ... ON CONFLICT(barcode) DO UPDATE` atualizando **apenas**
+  ///   os campos não nulos (`COALESCE(excluded.col, Product.col)`).
   Future<void> _upsertProductBasic({
     required String barcode,
     String? name,
@@ -22,7 +39,10 @@ class FavoritesRepoSqlite implements FavoritesRepo {
     ''', [barcode, name, brand]);
   }
 
-  /// Útil na UI quando já tens os dados do produto carregados.
+  /// Adiciona favorito **já** com dados básicos do produto (se conhecidos).
+  ///
+  /// Útil quando a UI tem o produto carregado e quer evitar um estado intermédio
+  /// sem metadados em `Product`.
   Future<void> addWithProduct(
     String userId,
     String barcode, {
@@ -35,6 +55,7 @@ class FavoritesRepoSqlite implements FavoritesRepo {
 
   // ---------------------------------------------------------------------------
 
+  /// Indica se o [barcode] está favoritado pelo [userId].
   @override
   Future<bool> isFavorited(String userId, String barcode) async {
     final r = await db.customSelect(
@@ -44,6 +65,7 @@ class FavoritesRepoSqlite implements FavoritesRepo {
     return r.isNotEmpty;
   }
 
+  /// Marca um produto como favorito (idempotente, usa `INSERT OR IGNORE`).
   @override
   Future<void> add(String userId, String barcode) async {
     await db.customStatement(
@@ -52,6 +74,7 @@ class FavoritesRepoSqlite implements FavoritesRepo {
     );
   }
 
+  /// Remove um favorito.
   @override
   Future<void> remove(String userId, String barcode) async {
     await db.customStatement(
@@ -60,6 +83,7 @@ class FavoritesRepoSqlite implements FavoritesRepo {
     );
   }
 
+  /// Alterna o estado de favorito, devolvendo `true` se ficou favoritado.
   @override
   Future<bool> toggle(String userId, String barcode) async {
     final exists = await isFavorited(userId, barcode);
@@ -72,6 +96,17 @@ class FavoritesRepoSqlite implements FavoritesRepo {
     }
   }
 
+  /// Lista os produtos favoritos do [userId], com **paginação** e pesquisa opcional.
+  ///
+  /// Parâmetros:
+  /// - [page]: página 1-based (default `1`);
+  /// - [pageSize]: tamanho da página (default `20`);
+  /// - [q]: termo de pesquisa aplicado a `name`, `brand` ou `barcode`
+  ///   (`LIKE` e `COLLATE NOCASE`).
+  ///
+  /// Notas:
+  /// - Usa `LEFT JOIN` para não “perder” favoritos sem linha correspondente em `Product`;
+  /// - Ordena por `f.createdAt DESC`.
   @override
   Future<List<ProductModel>> list(
     String userId, {

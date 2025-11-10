@@ -4,6 +4,7 @@ import '../../domain/models.dart';
 import '../../domain/repos.dart';
 import 'db.dart';
 
+/// Converte dinamicamente para `int?`, aceitando `int`, `double`, `num` ou `String`.
 int? _toInt(dynamic v) {
   if (v == null) return null;
   if (v is int) return v;
@@ -13,10 +14,38 @@ int? _toInt(dynamic v) {
   return null;
 }
 
+/// NutriScore — Repositório de Produtos (SQLite/Drift)
+///
+/// Implementação local de [ProductsRepo] suportada por SQLite (via Drift).
+/// Funcionalidades:
+/// - **Pesquisa** por nome/marca/barcode com ordenação por relevância;
+/// - **Lookup** rápido por código de barras;
+/// - Pesquisa local paginada com filtros opcionais (ex.: países) — [searchLocal];
+/// - **Upsert** de produtos, preservando `barcode` como chave única.
+///
+/// Notas:
+/// - A pesquisa dá prioridade a **nome exato** e **prefixos**, seguida de
+///   início de palavra, contém e barcode.
+/// - Campos nutricionais seguem o padrão por 100 g: `energyKcal_100g`, `proteins_100g`, etc.
 class ProductsRepoSqlite implements ProductsRepo {
+  /// Base de dados local.
   final NutriDatabase db;
+
+  /// Constrói o repositório de produtos.
   ProductsRepoSqlite(this.db);
 
+  /// Pesquisa produtos por [q] usando heurística de relevância.
+  ///
+  /// Critérios (por ordem):
+  /// 0. `name == q` (exato);
+  /// 1. `name LIKE q%` (prefixo);
+  /// 2. `name LIKE '% q%'` (início de palavra);
+  /// 3. `name LIKE '%q%'` (contém);
+  /// 4. `barcode == q` (exato);
+  /// 5. `barcode LIKE '%q%'` (contém);
+  /// 6. restante.
+  ///
+  /// Retorna até [limit] resultados. Normaliza espaços em [q].
   @override
   Future<List<ProductModel>> searchByName(String q, {int limit = 50}) async {
     final qNorm = q.trim().replaceAll(RegExp(r'\s+'), ' ');
@@ -85,6 +114,9 @@ class ProductsRepoSqlite implements ProductsRepo {
     }).toList();
   }
 
+  /// Obtém um produto pelo **código de barras**.
+  ///
+  /// Devolve `null` se não existir.
   @override
   Future<ProductModel?> getByBarcode(String barcode) async {
     final rows = await db
@@ -125,7 +157,11 @@ class ProductsRepoSqlite implements ProductsRepo {
     );
   }
 
-  // Utilitário extra (não faz parte da interface).
+  /// Pesquisa local paginada (utilitário extra, fora da interface).
+  ///
+  /// - Suporta [page]/[pageSize] e filtro opcional por países (`countriesFilter`,
+  ///   ex.: `'%portugal%'`).
+  /// - Ordena por `name` (`COLLATE NOCASE`).
   Future<List<ProductModel>> searchLocal(
     String q, {
     int page = 1,
@@ -175,6 +211,11 @@ class ProductsRepoSqlite implements ProductsRepo {
     }).toList();
   }
 
+  /// Insere ou atualiza um produto.
+  ///
+  /// - Gera `id` se vier vazio (UUID v4);
+  /// - Usa `ON CONFLICT(barcode) DO UPDATE` para garantir unicidade por `barcode`;
+  /// - Atualiza os valores nutricionais por 100 g e `updatedAt`.
   @override
   Future<void> upsert(ProductModel p) async {
     final id = p.id.isEmpty ? const Uuid().v4() : p.id;
@@ -202,7 +243,7 @@ class ProductsRepoSqlite implements ProductsRepo {
         id,
         p.barcode,
         p.name,
-        p.brand, // guardar brand
+        p.brand, 
         p.energyKcal100g,
         p.protein100g,
         p.carb100g,

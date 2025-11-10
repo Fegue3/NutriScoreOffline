@@ -1,21 +1,78 @@
 // lib/features/settings/settings_screen.dart
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+
 import '../../app/di.dart';
 import '../../core/theme.dart' show AppColors;
 
+/// ---------------------------------------------------------------------------
+/// NutriScore — SettingsScreen
+/// ---------------------------------------------------------------------------
+/// Ecrã principal de **Definições** da app:
+///
+/// 1. **Secção "Conta"**
+///    - Mostra nome e email do utilizador autenticado (via `userRepo.currentUser()`).
+///    - Link para o ecrã de edição de utilizador (`/settings/user`) onde se
+///      alteram dados biométricos, datas e metas.
+///
+/// 2. **Secção "Dieta & Objetivos"**
+///    - Ação rápida "Definir peso atual":
+///      - Abre um bottom sheet para introduzir o peso em kg.
+///      - Guarda um registo em `weightRepo` (tabela de logs de peso).
+///      - Atualiza também `UserGoals.currentWeightKg` via um statement SQL
+///        custom (`di.db.customStatement`), se possível.
+///    - Link "Ver progresso de nutrição" que navega para `/weight`
+///      (ecrã de evolução do peso / progresso).
+///
+/// 3. **"Danger Zone"**
+///    - Apagar conta: mostra `AlertDialog` de confirmação e chama
+///      `userRepo.deleteAccount()`. Em caso de sucesso, faz `go('/')`.
+///    - Terminar sessão: chama `userRepo.signOut()` e volta ao root (`'/'`).
+///
+/// 4. **Secção "Sobre"**
+///    - Mostra nome da app, versão e pequeno texto de descrição.
+///
+/// Integração com DI:
+///   - `di.userRepo`         → sessão, dados de utilizador, delete, sign out.
+///   - `di.weightRepo`       → logs de peso (para gráficos / histórico).
+///   - `di.db.customStatement` → update direto da tabela UserGoals (peso atual).
+///
+/// UX:
+///   - Usa `RefreshIndicator` para permitir "pull to refresh" dos dados
+///     de perfil (nome/email).
+///   - Feedback de sucesso/erro via SnackBar com helpers `_toastOk` / `_toastErr`.
+///   - Layout coerente com o resto da app (cores de `AppColors` e cards suaves).
+/// ---------------------------------------------------------------------------
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
+/// Estado do [SettingsScreen].
+///
+/// Responsabilidades:
+///  - Carregar dados básicos do perfil (nome, email) com `_bootstrap()`;
+///  - Tratar das ações de:
+///      * definir peso atual (`_setCurrentWeight`);
+///      * apagar conta (`_confirmDeleteAccount`);
+///      * terminar sessão (logout);
+///  - Construir a árvore de widgets das várias secções de definições.
 class _SettingsScreenState extends State<SettingsScreen> {
+  /// Indica se o ecrã está a carregar os dados iniciais do utilizador.
   bool _loading = true;
 
-  // Perfil
+  /// Nome do utilizador, tal como guardado em `UserModel.name`.
   String? _name;
+
+  /// Email do utilizador autenticado (pode ser vazio, dependendo do backend).
   String? _email;
+
+  // ---------------------------------------------------------------------------
+  // Ciclo de vida
+  // ---------------------------------------------------------------------------
 
   @override
   void initState() {
@@ -23,6 +80,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _bootstrap();
   }
 
+  // ---------------------------------------------------------------------------
+  // LOAD: leitura de perfil (userRepo)
+  // ---------------------------------------------------------------------------
+
+  /// Carrega o utilizador atual a partir do `userRepo` e preenche
+  /// [_name], [_email] e o flag [`_loading`].
+  ///
+  /// Chamada:
+  ///   - Ao iniciar (em `initState`);
+  ///   - Ao fazer pull-to-refresh no `RefreshIndicator`.
   Future<void> _bootstrap() async {
     final u = await di.userRepo.currentUser();
     if (!mounted) return;
@@ -33,10 +100,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  // =====================================================================
-  // Ações
-  // =====================================================================
+  // =======================================================================
+  // Helpers de feedback (SnackBars)
+  // =======================================================================
 
+  /// Mostra um `SnackBar` verde/positivo com a mensagem [msg].
   void _toastOk(String msg) {
     final cs = Theme.of(context).colorScheme;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -44,24 +112,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
         content: Text(msg),
         backgroundColor: cs.primary,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
       ),
     );
   }
 
+  /// Mostra um `SnackBar` vermelho/erro com a mensagem [msg].
   void _toastErr(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
         backgroundColor: Colors.red.shade700,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
       ),
     );
   }
 
+  // =======================================================================
+  // Ações principais
+  // =======================================================================
+
+  /// Abre um bottom sheet para o utilizador introduzir o peso atual em kg.
+  ///
+  /// Fluxo:
+  ///   1. Mostra o formulário com campo de texto numérico;
+  ///   2. Se o utilizador confirmar, valida o valor (0 < kg <= 400);
+  ///   3. Lê o utilizador atual via `userRepo.currentUser()`;
+  ///   4. Cria log do dia corrente em `weightRepo` (com data "canon" UTC 00:00);
+  ///   5. Tenta também atualizar `UserGoals.currentWeightKg` via statement
+  ///      SQL direto sobre a BD local (`di.db.customStatement`);
+  ///   6. Mostra mensagem de sucesso e refaz `_bootstrap()` para refletir
+  ///      possíveis alterações de peso relacionado com metas.
   Future<void> _setCurrentWeight() async {
     final controller = TextEditingController(text: '');
+
     final ok = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -121,8 +210,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (ok == true) {
+      // Converte texto para double (aceita vírgula ou ponto).
       final txt = controller.text.replaceAll(',', '.').trim();
       final kg = double.tryParse(txt);
+
+      // Validação simples de faixa plausível de peso.
       if (kg == null || kg <= 0 || kg > 400) {
         _toastErr('Peso inválido.');
         return;
@@ -143,7 +235,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'UPDATE UserGoals SET currentWeightKg=?, updatedAt=datetime(\'now\') WHERE userId=?;',
             [kg, u.id],
           );
-        } catch (_) {/* silencioso */ }
+        } catch (_) {
+          // silencioso; se falhar, pelo menos o log de peso fica guardado
+        }
 
         if (!mounted) return;
         _toastOk('Peso atualizado.');
@@ -155,6 +249,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Confirma com o utilizador se pretende realmente apagar a conta.
+  ///
+  /// - Mostra um `AlertDialog` com texto de aviso;
+  /// - Se confirmar:
+  ///   - Chama `userRepo.deleteAccount()` (responsável por limpar dados
+  ///     locais e remotos);
+  ///   - Mostra toast de sucesso e redireciona para `'/'` (e.g. ecrã de login);
+  /// - Se falhar, mostra toast de erro com mensagem técnica.
   Future<void> _confirmDeleteAccount() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -170,7 +272,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: AppColors.ripeRed),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.ripeRed,
+            ),
             child: const Text('Apagar'),
           ),
         ],
@@ -189,9 +293,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  // =====================================================================
-  // UI
-  // =====================================================================
+  // =======================================================================
+  // BUILD
+  // =======================================================================
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -211,6 +316,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       ),
+
+      /// Conteúdo dentro de um `RefreshIndicator` para permitir
+      /// "pull to refresh" (reload de nome/email).
       body: RefreshIndicator(
         onRefresh: _bootstrap,
         child: _loading
@@ -218,7 +326,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             : ListView(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                 children: [
-                  // ===== CONTA =====
+                  // ===========================================================
+                  // SECÇÃO: CONTA
+                  // ===========================================================
                   const _SectionHeader('Conta'),
                   _Card(
                     child: Column(
@@ -236,7 +346,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           iconBg: AppColors.freshGreen.withAlpha(24),
                           iconColor: AppColors.freshGreen,
                           title: 'Editar informações do utilizador',
-                          subtitle: 'Nome, preferências e dados básicos.',
+                          subtitle:
+                              'Nome, preferências e dados básicos.',
                           onTap: () => context.go('/settings/user'),
                         ),
                       ],
@@ -245,7 +356,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                   const SizedBox(height: 24),
 
-                  // ===== DIETA & OBJETIVOS =====
+                  // ===========================================================
+                  // SECÇÃO: DIETA & OBJETIVOS
+                  // ===========================================================
                   const _SectionHeader('Dieta & Objetivos'),
                   _Card(
                     child: Column(
@@ -271,7 +384,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                   const SizedBox(height: 24),
 
-                  // ===== DANGER ZONE =====
+                  // ===========================================================
+                  // SECÇÃO: DANGER ZONE
+                  // ===========================================================
                   const _SectionHeaderDanger('Danger Zone'),
                   _DangerCard(
                     child: Column(
@@ -279,7 +394,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         _DangerTile(
                           icon: Icons.delete_forever_outlined,
                           title: 'Apagar conta',
-                          subtitle: 'Remove todos os teus dados do servidor.',
+                          subtitle:
+                              'Remove todos os teus dados do servidor.',
                           onTap: _confirmDeleteAccount,
                         ),
                         _DangerDivider(),
@@ -298,13 +414,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                   const SizedBox(height: 24),
 
-                  // ===== SOBRE =====
+                  // ===========================================================
+                  // SECÇÃO: SOBRE
+                  // ===========================================================
                   const _SectionHeader('Sobre'),
                   const _Card(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _AboutRow(name: 'NutriScore', version: 'v1.0.0'),
+                        _AboutRow(
+                          name: 'NutriScore',
+                          version: 'v1.0.0',
+                        ),
                         SizedBox(height: 8),
                         Text(
                           'Aplicação para escolhas alimentares conscientes.\n'
@@ -321,9 +442,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 }
 
 // ============================================================================
-// Widgets / Helpers
+// Widgets auxiliares (seções, cards e tiles)
 // ============================================================================
 
+/// Cabeçalho de secção normal (ex.: "Conta", "Dieta & Objetivos", "Sobre").
 class _SectionHeader extends StatelessWidget {
   final String title;
   const _SectionHeader(this.title);
@@ -344,7 +466,7 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-// Título vermelho para a Danger Zone
+/// Cabeçalho específico para a "Danger Zone" (texto vermelho).
 class _SectionHeaderDanger extends StatelessWidget {
   final String title;
   const _SectionHeaderDanger(this.title);
@@ -365,6 +487,7 @@ class _SectionHeaderDanger extends StatelessWidget {
   }
 }
 
+/// Card genérico verde-claro usado nas secções normais.
 class _Card extends StatelessWidget {
   final Widget child;
   const _Card({required this.child});
@@ -389,7 +512,7 @@ class _Card extends StatelessWidget {
   }
 }
 
-// Card específico vermelho (tinte leve) para a Danger Zone
+/// Card com styling vermelho (tinte leve) para a *Danger Zone*.
 class _DangerCard extends StatelessWidget {
   final Widget child;
   const _DangerCard({required this.child});
@@ -400,7 +523,10 @@ class _DangerCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.ripeRed.withAlpha(16),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.ripeRed.withAlpha(120), width: 1),
+        border: Border.all(
+          color: AppColors.ripeRed.withAlpha(120),
+          width: 1,
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.04),
@@ -415,6 +541,7 @@ class _DangerCard extends StatelessWidget {
   }
 }
 
+/// Linha de perfil com avatar circular + nome + email.
 class _ProfileRow extends StatelessWidget {
   final String title;
   final String subtitle;
@@ -448,12 +575,16 @@ class _ProfileRow extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: tt.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                style: tt.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               if (subtitle.isNotEmpty)
                 Text(
                   subtitle,
-                  style: tt.bodyMedium?.copyWith(color: AppColors.coolGray),
+                  style: tt.bodyMedium?.copyWith(
+                    color: AppColors.coolGray,
+                  ),
                 ),
             ],
           ),
@@ -463,6 +594,7 @@ class _ProfileRow extends StatelessWidget {
   }
 }
 
+/// Tile genérico para itens de definições “normais”.
 class _Tile extends StatelessWidget {
   final IconData icon;
   final Color iconBg;
@@ -493,7 +625,10 @@ class _Tile extends StatelessWidget {
             Container(
               width: 36,
               height: 36,
-              decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
+              decoration: BoxDecoration(
+                color: iconBg,
+                shape: BoxShape.circle,
+              ),
               alignment: Alignment.center,
               child: Icon(icon, size: 20, color: iconColor),
             ),
@@ -530,7 +665,7 @@ class _Tile extends StatelessWidget {
   }
 }
 
-// Tiles específicos para Danger Zone (vermelhos por defeito)
+/// Tile específico para ações perigosas (apagar conta, logout, etc.).
 class _DangerTile extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -582,7 +717,8 @@ class _DangerTile extends StatelessWidget {
                       child: Text(
                         subtitle!,
                         style: tt.bodyMedium?.copyWith(
-                          color: AppColors.ripeRed.withValues(alpha: 0.85),
+                          color:
+                              AppColors.ripeRed.withValues(alpha: 0.85),
                         ),
                       ),
                     ),
@@ -597,6 +733,7 @@ class _DangerTile extends StatelessWidget {
   }
 }
 
+/// Divider vermelho suave para separar ações dentro da *Danger Zone*.
 class _DangerDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -608,6 +745,7 @@ class _DangerDivider extends StatelessWidget {
   }
 }
 
+/// Divider cinzento muito suave para separar tiles normais.
 class _DividerSoft extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -619,6 +757,7 @@ class _DividerSoft extends StatelessWidget {
   }
 }
 
+/// Linha da secção "Sobre": nome da app + versão.
 class _AboutRow extends StatelessWidget {
   final String name;
   final String version;

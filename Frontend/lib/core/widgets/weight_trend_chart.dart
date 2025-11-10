@@ -1,17 +1,31 @@
-// lib/core/widgets/weight_trend_chart.dart
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 
+/// Ponto de medição de peso (data + valor em kg).
+///
+/// Representa uma amostra individual usada no gráfico de tendência.
 class WeightPoint {
+  /// Data/hora do registo.
   final DateTime date;
+
+  /// Peso em quilogramas.
   final double weightKg;
+
+  /// Cria um ponto de peso com [date] e [weightKg].
   const WeightPoint({required this.date, required this.weightKg});
 }
 
-/// Card de UI PURA:
-/// - Se existirem múltiplos registos no mesmo dia, por defeito colapsa para o
-///   **último do dia** (consistente com o backend). Pode desligar via flag.
+/// NutriScore — Cartão de Tendência de Peso
+///
+/// Cartão puramente visual que apresenta um **gráfico de linha** com a evolução
+/// do peso ao longo do tempo. Para dias com múltiplas medições, por defeito
+/// **colapsa para o último registo do dia** (coerente com o backend), podendo
+/// ser desativado com [collapseSameDay].
+///
+/// - Título configurável ([title]), legenda opcional ([showLegend]).
+/// - Altura do gráfico ajustável via [height].
 class WeightTrendCard extends StatelessWidget {
+  /// Cria um cartão com gráfico de tendência do peso.
   const WeightTrendCard({
     super.key,
     required this.points,
@@ -21,10 +35,19 @@ class WeightTrendCard extends StatelessWidget {
     this.collapseSameDay = true,
   });
 
+  /// Lista de pontos de peso a apresentar.
   final List<WeightPoint> points;
+
+  /// Título do cartão.
   final String title;
+
+  /// Exibe uma legenda/ajuda de interação sob o gráfico.
   final bool showLegend;
+
+  /// Altura em pixels reservada ao gráfico.
   final double height;
+
+  /// Se `true`, colapsa múltiplos registos no mesmo dia para o **último** desse dia.
   final bool collapseSameDay; // <— NOVO
 
   @override
@@ -95,7 +118,10 @@ class WeightTrendCard extends StatelessWidget {
     );
   }
 
-  /// Agrupa por YYYY-MM-DD e devolve o **último** ponto desse dia (por hora).
+  /// Agrupa por **YYYY-MM-DD** e devolve o **último** ponto desse dia (por hora).
+  ///
+  /// Assume que [pts] vêm ordenados por data crescente; o último overwrite
+  /// por chave de dia preserva o registo mais recente de cada dia.
   List<WeightPoint> _collapseLastOfDay(List<WeightPoint> pts) {
     final byDay = <String, WeightPoint>{};
     for (final p in pts) {
@@ -111,9 +137,18 @@ class WeightTrendCard extends StatelessWidget {
   }
 }
 
+/// Gráfico de linha com `fl_chart` para a evolução do peso.
+///
+/// - Calcula margens dinâmicas em Y para evitar cortes.
+/// - Mostra grades horizontais e eixos com rótulos compactos.
+/// - Tooltip com data completa e valor em kg.
 class _Chart extends StatelessWidget {
   const _Chart({required this.points, required this.cs});
+
+  /// Pontos já pré-processados (ordenados e, se aplicável, colapsados).
   final List<WeightPoint> points;
+
+  /// Esquema de cores atual da app.
   final ColorScheme cs;
 
   @override

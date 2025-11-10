@@ -4,11 +4,30 @@ import '../../domain/repos.dart';
 import 'db.dart';
 import 'utils/dates.dart'; // justDateIso(DateTime)
 
+/// NutriScore — Repositório de Peso (SQLite/Drift)
+///
+/// Guarda e consulta registos de **peso corporal** do utilizador.
+///
+/// Funcionalidades:
+/// - [addLog] insere um registo (não agrega; mantém histórico completo);
+/// - [getRange] obtém série de registos entre duas datas, **ordenados**;
+/// - [latest] devolve o **registo mais recente** do utilizador.
+///
+/// Convenções:
+/// - Datas de dia usam o formato ISO curto `"YYYY-MM-DD"` via [justDateIso].
 class WeightRepoSqlite implements WeightRepo {
+  /// Base de dados local.
   final NutriDatabase db;
+
+  /// Constrói o repositório de peso.
   WeightRepoSqlite(this.db);
 
-  // Insere 1 log (não agrega por dia – fica histórico completo)
+  /// Insere **um registo de peso** para o [userId] no dia [day] com valor [kg].
+  ///
+  /// Notas:
+  /// - O ID é gerado via `lower(hex(randomblob(16)))`;
+  /// - `createdAt` é definido para `datetime('now')`;
+  /// - Campo [note] é opcional (pode ser `null`).
   @override
   Future<void> addLog(
     String userId,
@@ -26,8 +45,11 @@ class WeightRepoSqlite implements WeightRepo {
     );
   }
 
-  // Série por dia no intervalo, devolvendo o ÚLTIMO registo de cada dia
-  // (equivalente ao backend que considera o último do dia)
+  /// Obtém a **série de registos** entre [fromDay] e [toDay] (inclusive),
+  /// **ordenada por dia** e, dentro do dia, por `createdAt` ascendente.
+  ///
+  /// Regressa **todos os registos** do intervalo. (Se a UI quiser colapsar
+  /// para “último do dia”, poderá fazê-lo após esta leitura.)
   @override
   Future<List<WeightLogModel>> getRange(
     String userId,
@@ -64,7 +86,10 @@ class WeightRepoSqlite implements WeightRepo {
         .toList();
   }
 
-  //último peso global do utilizador
+  /// Obtém o **último peso** registado pelo utilizador, considerando
+  /// `ORDER BY createdAt DESC, day DESC`.
+  ///
+  /// Devolve `null` se não existirem registos.
   Future<WeightLogModel?> latest(String userId) async {
     final rows = await db
         .customSelect(

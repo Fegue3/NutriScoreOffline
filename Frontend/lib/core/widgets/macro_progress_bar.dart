@@ -1,23 +1,76 @@
 import 'package:flutter/material.dart';
-/// Barra de progresso para nutrientes, com animação on-mount.
-/// - Mostra "label" à esquerda e "used[/target] + unidade" à direita.
-/// - Se [target] for null/<=0, mostra só o valor (sem barra).
+
+/// NutriScore — Barra de Progresso de Macronutrientes
+///
+/// Widget para mostrar o progresso de um nutriente (ex.: **Proteína**, **Carboidratos**, **Gordura**, **Calorias**)
+/// com animação ao montar (on-mount). Exibe:
+/// - **Etiqueta** (label) à esquerda;
+/// - **Valor usado** e, opcionalmente, **alvo** + **unidade** à direita (ex.: `34g / 60g`);
+/// - **Barra de progresso** com animação (curva e duração configuráveis);
+/// - **Mensagem auxiliar** (helper) opcional por baixo.
+///
+/// Regras:
+/// - Se [target] for `null` ou `<= 0`, **não** renderiza a barra, apenas o valor.
+/// - Se `used > target`, o texto de valor fica com a cor de **erro** do tema.
+///
+/// ### Exemplo
+/// ```dart
+/// MacroProgressBar(
+///   label: 'Proteína',
+///   unit: 'g',
+///   used: 42,
+///   target: 100,
+///   helper: 'Objetivo diário: 100g',
+///   color: Theme.of(context).colorScheme.primary,
+///   delay: const Duration(milliseconds: 150), // para efeito em cascata (stagger)
+/// )
+/// ```
+///
+/// ### Acessibilidade
+/// - Apresenta **texto explícito** com valores e unidade (não depende apenas de cor).
+/// - Animações usam `Curves.easeOutCubic` por omissão para transições suaves.
+///
+/// ### Performance
+/// - Usa `TweenAnimationBuilder` para animar apenas a largura da barra.
+/// - Reanima quando `used` ou `target` mudam significativamente.
 class MacroProgressBar extends StatefulWidget {
+  /// Texto do nutriente (ex.: `"Proteína"`).
   final String label;     // "Proteína"
+
+  /// Unidade do valor (ex.: `"g"` | `"kcal"`).
   final String unit;      // "g" | "kcal"
+
+  /// Valor consumido/atingido.
   final num used;         // valor consumido
+
+  /// Alvo opcional. Se `null` ou `<= 0`, não mostra a barra.
   final num? target;      // null -> sem alvo/barra
+
+  /// Texto auxiliar por baixo (opcional).
   final String? helper;   // texto extra abaixo (opcional)
+
+  /// Espaçamento interno vertical do componente (por padrão, `EdgeInsets.symmetric(vertical: 10)`).
   final EdgeInsets padding;
+
+  /// Se `true`, usa uma barra mais baixa (8px em vez de 10px).
   final bool dense;
 
-  /// Cores
+  /// Cor principal da barra (fallback: `primary` ou `error` se excedido).
   final Color? color;           // cor da barra (ex.: primary/secondary/error)
+
+  /// Cor de fundo da barra (fallback: `surfaceContainerHighest`).
   final Color? backgroundColor; // fundo da barra
+
+  /// Duração da animação da barra.
   final Duration duration;      // duração da animação
+
+  /// Curva da animação.
   final Curve curve;            // curva da animação
+
+  /// Atraso inicial para permitir **stagger** quando existem múltiplas barras.
   final Duration? delay;        // atraso inicial (para stagger)
 
+  /// Cria uma barra de progresso para macronutrientes/calorias.
   const MacroProgressBar({
     super.key,
     required this.label,
@@ -40,6 +93,7 @@ class MacroProgressBar extends StatefulWidget {
 
 class _MacroProgressBarState extends State<MacroProgressBar>
     with SingleTickerProviderStateMixin {
+  /// *Trigger* interno (0..1) para coordenar o atraso ([delay]) com a animação do tween.
   double _t = 0; // 0..1 para animar widthFactor
 
   @override
@@ -58,6 +112,7 @@ class _MacroProgressBarState extends State<MacroProgressBar>
     }
   }
 
+  /// Inicia a animação, respeitando um eventual [delay] configurado.
   Future<void> _start() async {
     if (widget.delay != null) {
       await Future.delayed(widget.delay!);
@@ -152,6 +207,10 @@ class _MacroProgressBarState extends State<MacroProgressBar>
     );
   }
 
+  /// Formata números em **PT-PT**:
+  /// - 0 casas decimais para inteiros;
+  /// - 1 casa decimal para fracionários;
+  /// - **vírgula** como separador decimal.
   String _fmt(num n) {
     final s = n.toStringAsFixed(n % 1 == 0 ? 0 : 1);
     return s.replaceAll('.', ',');

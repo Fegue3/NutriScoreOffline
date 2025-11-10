@@ -9,10 +9,22 @@ import 'products_remote_datasource.dart';
 import 'sync_queue.dart';
 import 'config.dart';
 
-/// Repositório híbrido (offline-first) compatível com BD antiga.
-/// - Busca local primeiro (com ranking: EXATO > prefixo > palavra > contém > barcode exato > barcode contém).
-/// - Só vai online no getByBarcode() ou fetchOnlineAndCache() (quando o user submete).
-/// - Gera IDs únicos para evitar conflitos.
+/// Repositório **híbrido (offline-first)** para Produtos
+///
+/// Objetivo principal:
+/// - **Ler local primeiro** (SQLite), garantindo resposta imediata e funcionamento offline.
+/// - **Ir online apenas quando necessário**:
+///   - `getByBarcode()` tenta OFF se não existir localmente;
+///   - `fetchOnlineAndCache()` quando o utilizador submete a pesquisa explicitamente.
+/// - **Compatível com esquemas antigos** (tem *fallbacks* quando faltam colunas novas).
+///
+/// Estratégia de ranking na pesquisa local:
+/// **EXATO > prefixo > palavra > contém > barcode exato > barcode contém**.
+///
+/// Notas:
+/// - IDs gerados com UUID v4 para evitar colisões;
+/// - Suporta *queue* de sincronização para controlar concorrência;
+/// - Mapeia DTOs do OFF para `ProductModel` via `dtoToProductModel()`.
 class ProductsRepoHybrid implements ProductsRepo {
   final NutriDatabase db;
   final ProductsRemoteDataSource remote;
@@ -27,6 +39,7 @@ class ProductsRepoHybrid implements ProductsRepo {
 
   // ====================== Helpers =========================
 
+  /// Converte valor dinâmico em `int?` (aceita `int|double|num|string`).
   int? _toInt(dynamic v) {
     if (v == null) return null;
     if (v is int) return v;
@@ -36,6 +49,7 @@ class ProductsRepoHybrid implements ProductsRepo {
     return null;
   }
 
+  /// Lê, da tabela `Product`, a linha do produto por **barcode** (se existir).
   Future<Map<String, dynamic>?> _getLocalRowByBarcode(String barcode) async {
     final rows = await db.customSelect(
       '''
@@ -51,6 +65,11 @@ class ProductsRepoHybrid implements ProductsRepo {
     return rows.isEmpty ? null : rows.first.data;
   }
 
+  /// Faz **UPSERT** de um produto vindo do OFF (DTO) para a base local.
+  ///
+  /// - Usa `_uuid.v4()` para gerar `id` quando necessário;
+  /// - Tenta inserir com colunas **modernas** (`etag`, `lastFetchedAt`, `nutrimentsJson`);
+  /// - Se falhar (schema antigo), faz *fallback* para inserção sem essas colunas.
   Future<void> _upsertLocalFromDto(OffProductDto d, {String? etag}) async {
     final m = dtoToProductModel(d);
     final args = [
@@ -131,6 +150,7 @@ class ProductsRepoHybrid implements ProductsRepo {
     }
   }
 
+  /// Converte um *row* da `Product` num [ProductModel] de domínio.
   ProductModel _rowToModel(Map<String, dynamic> r) {
     return ProductModel(
       id: (r['id'] as String?) ?? '',
@@ -149,6 +169,9 @@ class ProductsRepoHybrid implements ProductsRepo {
 
   // ====================== Interface =========================
 
+  /// Obtém produto por **barcode**:
+  /// 1) Tenta **local**; se existir, devolve logo;
+  /// 2) Se não existir, tenta **OFF** (online), faz *upsert* local e devolve.
   @override
   Future<ProductModel?> getByBarcode(String barcode) async {
     final local = await _getLocalRowByBarcode(barcode);
@@ -178,6 +201,12 @@ class ProductsRepoHybrid implements ProductsRepo {
     return null;
   }
 
+  /// Pesquisa **local** por nome/marca/barcode com ranking:
+  /// EXATO > prefixo > palavra > contém > barcode exato > barcode contém.
+  ///
+  /// Se houver resultados locais, devolve imediatamente.
+  /// Caso contrário, não vai online aqui — a ida à rede acontece em
+  /// [fetchOnlineAndCache], quando o utilizador submete explicitamente.
   @override
   Future<List<ProductModel>> searchByName(String q, {int limit = 50}) async {
     // mesma prioridade do repo sqlite: EXATO > prefixo > palavra > contém > barcode exato > barcode contém
@@ -240,8 +269,12 @@ class ProductsRepoHybrid implements ProductsRepo {
     return localResults;
   }
 
-  /// Chama isto quando o utilizador pressiona “Enter/Pesquisar”.
-  /// Faz fetch online, guarda localmente e volta a pesquisar com o mesmo ranking.
+  /// **Pesquisa online** no OFF quando o utilizador confirma a pesquisa (ex.: Enter).
+  ///
+  /// Passos:
+  /// 1) Chama `remote.search()` (com *throttle*);
+  /// 2) Faz **cache local** de todos os resultados (UPSERT por barcode);
+  /// 3) Reexecuta a **mesma pesquisa local** (com ranking) e devolve.
   Future<List<ProductModel>> fetchOnlineAndCache(String q, {int limit = 50}) async {
     final qNorm = q.trim().replaceAll(RegExp(r'\s+'), ' ');
     // ignore: avoid_print
@@ -268,6 +301,10 @@ class ProductsRepoHybrid implements ProductsRepo {
     return [];
   }
 
+  /// UPSERT explícito de [ProductModel] para a tabela `Product`.
+  ///
+  /// - Atualiza campos nutricionais e `updatedAt`;
+  /// - Conflitos por `barcode` atualizam a linha existente.
   @override
   Future<void> upsert(ProductModel p) async {
     await db.customStatement(

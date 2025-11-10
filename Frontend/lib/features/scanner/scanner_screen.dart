@@ -7,6 +7,23 @@ import 'package:flutter/services.dart'; // HapticFeedback
 import '../../app/di.dart';
 import '../../domain/models.dart';
 
+/// Ecrã de **scanner de códigos de barras** (câmara traseira).
+///
+/// Fluxo principal:
+/// 1) Captura um código de barras (EAN, etc.) via `mobile_scanner`;
+/// 2) Faz lookup local/online (via `di.productsRepo.getByBarcode`);
+/// 3) Regista entrada no histórico (`di.historyRepo.addIfNotDuplicate`);
+/// 4) Navega para o detalhe do produto, já com base nutricional (100 g).
+///
+/// Notas de UX/robustez:
+/// - Utiliza *debounce/cooldown* para evitar leituras repetidas (`_last` + `_cooldown`);
+/// - Feedback háptico no momento da leitura (`HapticFeedback.mediumImpact`);
+/// - Mostra *SnackBar* se o produto não for encontrado;
+/// - Botões de *Flash* e *Inverter câmara* em *pills* no rodapé.
+///
+/// Parâmetros de navegação (opcionais):
+/// - [initialMealLabelPt]  — rótulo PT da refeição para pré-seleção (p.ex. "Almoço");
+/// - [isoDate]             — data ISO para registo (se ausente, usa `DateTime.now()`).
 class ScannerScreen extends StatefulWidget {
   final String? initialMealLabelPt; // ex: "Almoço"
   final String? isoDate; // ex: "2025-10-11T00:00:00.000"
@@ -17,19 +34,27 @@ class ScannerScreen extends StatefulWidget {
 }
 
 class _ScannerScreenState extends State<ScannerScreen> {
+  /// Controlador do `mobile_scanner` (câmara, velocidade, face).
   final MobileScannerController _c = MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
     facing: CameraFacing.back,
   );
 
+  /// Evita *re-entrância* durante a resolução de um código.
   bool _busy = false;
+
+  /// Guarda o último código lido para evitar duplicados consecutivos.
   String? _last;
+
+  /// Janela de *cooldown* curta após cada leitura (evita toques repetidos).
   Timer? _cooldown;
 
+  /// Data efetiva utilizada no registo/encaminhamento (ISO fornecida ou agora).
   DateTime get _date =>
       (widget.isoDate != null ? DateTime.tryParse(widget.isoDate!) : null) ??
       DateTime.now();
 
+  /// Rótulo PT da refeição inicial (se fornecido externamente).
   String? get _mealLabelPt => widget.initialMealLabelPt;
 
   @override
@@ -39,6 +64,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
     super.dispose();
   }
 
+  /// Handler de deteção de código de barras.
+  ///
+  /// Passos:
+  /// - Ignora se estiver ocupado (`_busy`) ou se o código for vazio/igual ao último;
+  /// - Vibra (feedback háptico);
+  /// - Obtém produto por *barcode* (repo híbrido: local → OFF);
+  /// - Acrescenta ao histórico (se existir *user*);
+  /// - Faz `pushNamed('productDetail', extra: {...})` com dados do produto;
+  /// - Abre janela de *cooldown* para permitir nova leitura segura.
   Future<void> _onDetect(BarcodeCapture cap) async {
     if (_busy) return;
     final code = cap.barcodes.first.rawValue;
@@ -50,7 +84,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
     try {
       HapticFeedback.mediumImpact();
 
-      // 1) buscar produto
+      // 1) buscar produto (offline-first; o híbrido tenta local e pode ir à OFF API)
       final p = await di.productsRepo.getByBarcode(code);
       if (p == null) {
         if (!mounted) return;
@@ -115,9 +149,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
       body: Stack(
         fit: StackFit.expand,
         children: [
+          // *Preview* da câmara + deteção em tempo real
           MobileScanner(controller: _c, onDetect: _onDetect),
 
-          // moldura simples
+          // Moldura visual (área de foco) — meramente decorativa
           Align(
             alignment: const Alignment(0, -0.1),
             child: Container(
@@ -130,7 +165,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
             ),
           ),
 
-          // ações
+          // Ações rápidas: Flash e inverter câmara
           Positioned(
             left: 16,
             right: 16,
@@ -148,6 +183,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
     );
   }
 
+  /// Botão em formato *pill* usado na barra de ações do scanner.
   Widget _pill(
     String label,
     IconData icon,

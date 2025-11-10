@@ -9,8 +9,25 @@ import 'package:path_provider/path_provider.dart';
 
 part 'db.g.dart';
 
-/// Copia a BD pré-carregada (assets/db/nutriscore.db) para o storage da app
-/// no 1º arranque. Se não existir o asset, faz fallback para criar via SQL.
+/// NutriScore — Base de Dados Local (Drift/SQLite)
+///
+/// Responsável por:
+/// - Preparar o ficheiro de base de dados na primeira execução, preferindo
+///   **copiar um catálogo pré-carregado** de `assets/db/nutriscore.db`;
+/// - Criar e abrir a BD com **Drift** em modo `LazyDatabase`;
+/// - Aplicar o **schema inicial** via `offline_schema.sql` quando não existe
+///   o asset pré-carregado (caminho *fallback*);
+/// - Ativar `PRAGMA foreign_keys = ON;` em `onCreate`, `onUpgrade` e `beforeOpen`.
+///
+/// Estrutura:
+/// - [_prepareDatabaseFile] tenta copiar o asset e faz *fallback* para criação
+///   do ficheiro vazio (o *bootstrap* corre em `onCreate`);
+/// - [_execSqlScript] executa ficheiros `.sql` respeitando blocos
+///   `CREATE TRIGGER ... BEGIN ... END;`.
+
+/// Copia a BD pré-carregada (`assets/db/nutriscore.db`) para o armazenamento
+/// da app no **primeiro arranque**. Se não existir o asset, faz *fallback* para
+/// criar via SQL no `onCreate`.
 Future<File> _prepareDatabaseFile() async {
   final dir = await getApplicationDocumentsDirectory();
   final dbPath = p.join(dir.path, 'nutriscore.db'); // nome "oficial" da app
@@ -36,6 +53,8 @@ Future<File> _prepareDatabaseFile() async {
   return dbFile;
 }
 
+/// Abre a base de dados de forma preguiçosa (`LazyDatabase`),
+/// possibilitando correr trabalho de IO antes da criação do *engine*.
 LazyDatabase _openDb() {
   return LazyDatabase(() async {
     final file = await _prepareDatabaseFile();
@@ -48,13 +67,19 @@ LazyDatabase _openDb() {
   });
 }
 
+/// Entrada principal da base de dados Drift.
+///
+/// **Nota**: As `tables` e `daos` são geradas em `part 'db.g.dart'`.
 @DriftDatabase(tables: [], daos: [])
 class NutriDatabase extends _$NutriDatabase {
+  /// Constrói a BD usando o *opener* preguiçoso.
   NutriDatabase() : super(_openDb());
 
+  /// Versão do schema local. Incrementar quando introduzir migrações.
   @override
   int get schemaVersion => 1;
 
+  /// Estratégia de migração com *hooks* para criação/upgrade/abertura.
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (m) async {
@@ -72,6 +97,9 @@ class NutriDatabase extends _$NutriDatabase {
         },
       );
 
+  /// Aplica o **schema inicial** a partir do `offline_schema.sql`.
+  ///
+  /// Chamado apenas no *fallback* quando não existe catálogo pré-carregado.
   Future<void> _bootstrapFromAsset(GeneratedDatabase db) async {
     // Cria schema via SQL (só no fallback sem asset)
     final sql = await rootBundle.loadString('assets/sql/offline_schema.sql');
@@ -79,7 +107,13 @@ class NutriDatabase extends _$NutriDatabase {
   }
 }
 
-/// Executa o .sql respeitando blocos CREATE TRIGGER ... BEGIN ... END;
+/// Executa um script `.sql` **respeitando blocos de triggers**:
+/// `CREATE TRIGGER ... BEGIN ... END;`.
+///
+/// Regras:
+/// - Ignora linhas vazias e comentários (`-- ...`);
+/// - Dentro de triggers, **só termina** ao encontrar `END;` na linha;
+/// - Fora de triggers, termina em `;` (ponto e vírgula).
 Future<void> _execSqlScript(GeneratedDatabase db, String script) async {
   final buf = StringBuffer();
   var inTriggerBlock = false;

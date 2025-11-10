@@ -1,4 +1,49 @@
-// lib/app/router/app_router.dart
+/// NutriScore — Router da Aplicação
+///
+/// Define a árvore de navegação usando `go_router`, incluindo:
+/// - Guarda global de autenticação e onboarding;
+/// - Rotas públicas (auth) e privadas (dashboard, diário, definições);
+/// - Passagem segura de parâmetros via `state.extra` para ecrãs como *Add Food*
+///   e *Product Detail* com parsing robusto (tipos `MealType`, `DateTime` e numéricos).
+///
+/// ### Boas práticas adotadas
+/// - **Redireções defensivas**: previnem acesso a rotas privadas sem sessão ou sem
+///   onboarding concluído.
+/// - **Compatibilidade de parâmetros**: aceita múltiplas chaves para o mesmo
+///   semântico (ex.: `meal`, `initialMeal`, `selectedMealDb`, etc.), reduzindo assim
+///   acoplamento entre módulos.
+/// - **Conversões seguras**: funções auxiliares locais (`asInt`, `asDouble`) e
+///   `DateTime.tryParse` para evitar falhas.
+///
+/// ### Exemplos de navegação
+/// ```dart
+/// // Enviar para Add Food com refeição e data:
+/// context.goNamed('addFood', extra: {
+///   'meal': MealType.lunch,
+///   'dateYmd': '2025-11-10',
+/// });
+///
+/// // Abrir Product Detail com dados pré-preenchidos:
+/// context.goNamed('productDetail', extra: {
+///   'barcode': '5601234567890',
+///   'name': 'Iogurte Natural',
+///   'brand': 'Marca X',
+///   'baseQuantityLabel': '100 g',
+///   'kcalPerBase': 60,
+///   'proteinGPerBase': 5.1,
+///   'carbsGPerBase': 3.4,
+///   'fatGPerBase': 2.0,
+///   'nutriScore': 'A',
+///   'meal': 'LUNCH',
+///   'dateYmd': '2025-11-10',
+/// });
+/// ```
+///
+/// > Nota: este router é a *fonte única de verdade* para caminhos de UI.
+/// > Evita-se duplicação de *strings* de rotas noutros ficheiros.
+///
+/// Autor: Francisco Pereira · Atualizado: 2025-11-10
+library;
 import 'package:go_router/go_router.dart';
 import 'package:drift/drift.dart' show Variable;
 import '../../app/di.dart' as di;
@@ -22,11 +67,34 @@ import '../../features/scanner/scanner_screen.dart';
 import '../app_shell.dart';
 import '../../core/meal_type.dart';
 
+/// Constrói e devolve o `GoRouter` principal do **NutriScore**.
+///
+/// Responsabilidades:
+/// - Definir `initialLocation` e a *guarda global* (`redirect`) para sessão e onboarding;
+/// - Declarar todas as rotas de nível de app, incluindo *shell* com *Bottom Nav*;
+/// - Fornecer `name` para rotas chave (ex.: `'addFood'`, `'productDetail'`,
+///   `'nutritionStats'`, `'weight'`) para navegação por nome.
+///
+/// Retorna:
+/// - Instância configurada de [GoRouter] pronta a ser passada ao `MaterialApp.router`.
 GoRouter buildAppRouter() {
   return GoRouter(
+    /// **Rota inicial**:
+    /// - '/' abre o *AuthHub* quando não existe sessão;
+    /// - A guarda global pode redirecionar para `/onboarding` ou `/dashboard`.
     initialLocation: '/',
 
     // ==================== GUARDA GLOBAL ====================
+    /// **Guarda Global (redirect)** — aplica regras de:
+    /// 1) **Sessão**: impede acesso a rotas privadas sem utilizador local;
+    /// 2) **Onboarding**: obriga a concluir onboarding antes de entrar no app shell;
+    /// 3) **Rotas públicas**: se já logado e onboarding feito, evita voltar a '/', '/login', '/signup'.
+    ///
+    /// Fluxo:
+    /// - Lê utilizador atual de `userRepo.currentUser()`;
+    /// - Se não existir, permite apenas `{ '/', '/login', '/signup' }`;
+    /// - Se existir, verifica a flag `onboardingCompleted` na tabela `User` (via `drift`);
+    /// - Redireciona para `/onboarding` se incompleto, ou para `/dashboard` se tentar ir a rotas públicas.
     redirect: (context, state) async {
       final loc = state.matchedLocation;
       final public = {'/', '/login', '/signup'};
@@ -56,14 +124,45 @@ GoRouter buildAppRouter() {
 
     // ==================== ROTAS ====================
     routes: [
+      /// **/** — Hub de autenticação.
+      ///
+      /// Estado: *pública* (acessível sem sessão). Pode ser redirecionada pela guarda.
       GoRoute(path: '/', builder: (_, __) => const AuthHubScreen()),
+
+      /// **/login** — Ecrã de autenticação (credenciais).
+      ///
+      /// Estado: *pública*.
       GoRoute(path: '/login', builder: (_, __) => const SignInScreen()),
+
+      /// **/signup** — Ecrã de registo de conta.
+      ///
+      /// Estado: *pública*.
       GoRoute(path: '/signup', builder: (_, __) => const SignUpScreen()),
+
+      /// **/onboarding** — Passos iniciais do utilizador.
+      ///
+      /// Redirecionada pela guarda até `onboardingCompleted == true`.
       GoRoute(
         path: '/onboarding',
         builder: (_, __) => const OnboardingScreen(),
       ),
 
+      /// **/add-food** *(name: 'addFood')* — Ecrã para registar alimento/refeição.
+      ///
+      /// `state.extra` (Map opcional) — chaves aceites:
+      /// - **Refeição** (`MealType` ou `String`):
+      ///   - `'meal' | 'initialMeal' | 'initialMealDb' | 'initialMealTitle' | 'selectedMealDb' | 'selectedMealTitle' | 'mealTitle'`
+      ///   - Strings aceitam `'BREAKFAST'|'LUNCH'|'SNACK'|'DINNER'` ou rótulos PT (via `MealTypeX.fromPt`).
+      /// - **Data**:
+      ///   - `'dateYmd'` ou `'selectedDateYmd'` no formato ISO (`yyyy-MM-dd`) para `DateTime.tryParse`.
+      ///
+      /// Exemplo:
+      /// ```dart
+      /// context.goNamed('addFood', extra: {
+      ///   'meal': MealType.dinner,
+      ///   'dateYmd': '2025-11-10',
+      /// });
+      /// ```
       GoRoute(
         path: '/add-food',
         name: 'addFood',
@@ -119,20 +218,52 @@ GoRouter buildAppRouter() {
         },
       ),
 
+      /// **/scan** — Ecrã do leitor de código de barras/QR.
+      ///
+      /// Uso: iniciar pesquisa de produto (ex.: Open Food Facts) e pré-preencher detalhes.
       GoRoute(path: '/scan', builder: (_, __) => const ScannerScreen()),
 
+      /// **/weight** *(name: 'weight')* — Progresso de peso.
+      ///
+      /// Mostra histórico e evolução (tendências).
       GoRoute(
         path: '/weight',
         name: 'weight',
         builder: (_, __) => const wp.WeightProgressScreen(),
       ),
 
+      /// **/settings/user** — Edição de perfil do utilizador.
+      ///
+      /// Usa `NoTransitionPage` para transição instantânea.
       GoRoute(
         path: '/settings/user',
         pageBuilder: (_, __) => const NoTransitionPage(child: EditUserScreen()),
       ),
 
       // ---------- PRODUCT DETAIL ----------
+      /// **/product-detail** *(name: 'productDetail')* — Detalhe de produto alimentar.
+      ///
+      /// Aceita um `Map` em `state.extra` com:
+      /// - **Identificação**: `barcode`, `name`, `brand`, `origin`
+      /// - **Base**: `baseQuantityLabel` (ex.: `'100 g'`)
+      /// - **Nutrição por base** (int/double ou string numérica):
+      ///   `kcalPerBase`, `proteinGPerBase`, `carbsGPerBase`, `fatGPerBase`,
+      ///   `saltGPerBase`, `sugarsGPerBase`, `satFatGPerBase`, `fiberGPerBase`,
+      ///   `sodiumGPerBase`
+      /// - **NutriScore**: `nutriScore` (string `'A'..'E'`)
+      /// - **Contexto de adição**:
+      ///   - Refeição: `meal` (enum) ou strings `'BREAKFAST'|'LUNCH'|'SNACK'|'DINNER'`
+      ///     ou rótulo PT (via `MealTypeX.fromPt`)
+      ///   - Data: `dateYmd`/`selectedDateYmd` (ISO) **ou** `date`/`selectedDate` (`DateTime`/`String`)
+      /// - **Flags**:
+      ///   - `readOnly`: `true` para modo somente leitura
+      ///   - `freezeFromEntry`: `true` para fixar valores vindos de registo
+      /// - **Outros**:
+      ///   - `initialGrams`: quantidade inicial em gramas
+      ///   - `existingMealItemId`: id de item já registado (edição)
+      ///
+      /// Conversões robustas:
+      /// - `asInt`/`asDouble` aceitam `int`, `double`, `num` ou `String` numérica.
       GoRoute(
         name: 'productDetail',
         path: '/product-detail',
@@ -226,6 +357,9 @@ GoRouter buildAppRouter() {
         },
       ),
 
+      /// **/nutrition/stats** *(name: 'nutritionStats')* — Estatísticas agregadas de nutrição.
+      ///
+      /// Exibe métricas e tendências (ex.: semana/mês).
       GoRoute(
         path: '/nutrition/stats',
         name: 'nutritionStats',
@@ -233,18 +367,31 @@ GoRouter buildAppRouter() {
       ),
 
       // ---------- SHELL PRINCIPAL ----------
+      /// **Shell principal (AppShell)** — engloba rotas com navegação inferior.
+      ///
+      /// Filhos:
+      /// - `/dashboard` — Home;
+      /// - `/diary` — Diário alimentar;
+      /// - `/settings` — Definições.
+      ///
+      /// Usa `NoTransitionPage` para UX fluida entre tabs.
       ShellRoute(
         builder: (_, __, child) => AppShell(child: child),
         routes: [
+          /// **/dashboard** — Ecrã inicial (Home).
           GoRoute(
             path: '/dashboard',
             pageBuilder: (_, __) => const NoTransitionPage(child: HomeScreen()),
           ),
+
+          /// **/diary** — Diário alimentar (lista de entradas por dia).
           GoRoute(
             path: '/diary',
             pageBuilder: (_, __) =>
                 const NoTransitionPage(child: NutritionScreen()),
           ),
+
+          /// **/settings** — Definições gerais da aplicação.
           GoRoute(
             path: '/settings',
             pageBuilder: (_, __) =>

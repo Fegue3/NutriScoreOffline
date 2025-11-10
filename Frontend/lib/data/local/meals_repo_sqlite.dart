@@ -7,10 +7,35 @@ import 'db.dart';
 import 'utils/dates.dart';
 import 'utils/food_calc.dart';
 
+/// NutriScore — Repositório de Refeições (SQLite/Drift)
+///
+/// Responsável por:
+/// - Ler as **refeições de um dia** com os respetivos itens (produto ou alimento customizado);
+/// - Inserir/atualizar/remover itens de refeição;
+/// - Recalcular **totais da refeição** e **estatísticas diárias** (DailyStats) após alterações.
+///
+/// Regras gerais:
+/// - As datas de dia usam sempre o **formato canónico UTC** (`canonDayUtcIso`);
+/// - Cada `MealItem` pode referir **Product** (via `productBarcode`) ou **CustomFood**;
+/// - Quantidades são convertidas em nutrientes usando **valores por 100 g** através de [calcPerQuantity].
 class MealsRepoSqlite implements MealsRepo {
+  /// Base de dados local.
   final NutriDatabase db;
+
+  /// Constrói o repositório de refeições.
   MealsRepoSqlite(this.db);
 
+  // ---------------------------------------------------------------------------
+  // LEITURA
+  // ---------------------------------------------------------------------------
+
+  /// Obtém as refeições do dia (ordenadas por `type`) com todos os itens já resolvidos.
+  ///
+  /// - [userId]: utilizador dono das refeições;
+  /// - [dayUtcCanon]: qualquer `DateTime` nesse dia; será normalizado com [canonDayUtcIso].
+  ///
+  /// Para cada `Meal`, junta `MealItem` e resolve `name/brand` a partir das tabelas
+  /// de origem (dá prioridade ao nome do **Product**; se não existir, usa o de **CustomFood**).
   @override
   Future<List<MealWithItems>> getMealsForDay(
     String userId,
@@ -110,6 +135,19 @@ class MealsRepoSqlite implements MealsRepo {
     return result;
   }
 
+  // ---------------------------------------------------------------------------
+  // INSERÇÃO / ATUALIZAÇÃO
+  // ---------------------------------------------------------------------------
+
+  /// Adiciona um item a uma refeição (criando a refeição, se necessário) e
+  /// recalcula os totais da `Meal` e as **estatísticas diárias**.
+  ///
+  /// Fluxo:
+  /// 1) *Ensure* `Meal` do dia e tipo com [_ensureMeal];
+  /// 2) Carrega perfil **por 100 g** da origem (Product/CustomFood);
+  /// 3) Calcula totais do item via [calcPerQuantity];
+  /// 4) Insere `MealItem`;
+  /// 5) Recalcula `Meal` e `DailyStats`.
   @override
   Future<void> addOrUpdateMealItem(AddMealItemInput input) async {
     final day = canonDayUtcIso(input.dayUtcCanon);
@@ -210,9 +248,11 @@ class MealsRepoSqlite implements MealsRepo {
     });
   }
 
+  /// Remove um item de refeição por [mealItemId] e atualiza os totais associados.
   @override
   Future<void> removeMealItem(String mealItemId) async {
     await db.transaction(() async {
+      // Descobrir `mealId`, `userId` e `day` do item a remover
       final info = await db
           .customSelect(
             '''
@@ -237,6 +277,7 @@ class MealsRepoSqlite implements MealsRepo {
     });
   }
 
+  /// Garante a existência da `Meal` (por `userId` + `dayIso` + `type`), devolvendo o seu `id`.
   Future<String> _ensureMeal(String userId, String dayIso, String type) async {
     final e = await db
         .customSelect(
@@ -258,6 +299,14 @@ class MealsRepoSqlite implements MealsRepo {
     return id;
   }
 
+  /// Atualiza a **quantidade** de um item e recalcula nutrientes + totais agregados.
+  ///
+  /// Fluxo:
+  /// 1) Carrega contexto do item (origem Product/CustomFood, owner, dia);
+  /// 2) Obtém **valores por 100 g** da origem;
+  /// 3) Recalcula com [calcPerQuantity] para a nova quantidade;
+  /// 4) Atualiza `MealItem`;
+  /// 5) Recalcula `Meal` e `DailyStats`.
   @override
   Future<void> updateMealItemQuantity(
     String mealItemId, {
@@ -380,6 +429,11 @@ class MealsRepoSqlite implements MealsRepo {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // CÁLCULOS AGREGADOS
+  // ---------------------------------------------------------------------------
+
+  /// Recalcula e persiste os **totais da refeição** (`Meal.total*`) a partir dos seus itens.
   Future<void> _recalcMealTotals(String mealId) async {
     final rows = await db
         .customSelect(
@@ -411,6 +465,10 @@ class MealsRepoSqlite implements MealsRepo {
     );
   }
 
+  /// Recalcula e *upsert* as **estatísticas diárias** (`DailyStats`) do utilizador para [dayIso].
+  ///
+  /// Agrega todos os `MealItem` do dia (somatório por nutriente) e atualiza/insere
+  /// a linha correspondente em `DailyStats`.
   Future<void> _recalcDailyStats(String userId, String dayIso) async {
     final rows = await db
         .customSelect(

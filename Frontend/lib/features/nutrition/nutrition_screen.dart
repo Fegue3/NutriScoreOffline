@@ -1,4 +1,5 @@
 // lib/features/nutrition/nutrition_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -6,25 +7,102 @@ import '../../app/di.dart' as di;
 import '../../domain/models.dart';
 import '../../core/meal_type.dart'; // <- ÚNICA fonte do enum + extensions
 
-/// NutriScore – NutritionScreen
-
+/// NutriScore — Diário Alimentar (NutritionScreen)
+///
+/// Ecrã principal para **consultar e editar o diário alimentar**, dia a dia.
+/// Permite ao utilizador:
+///
+/// - navegar entre dias (ontem, hoje, amanhã, etc.) com:
+///   - botões de seta;
+///   - gesto de swipe horizontal sobre o cabeçalho da data;
+/// - ver um **resumo diário de calorias** (meta, consumidas, restantes);
+/// - consultar, por refeição:
+///   - lista de alimentos registados;
+///   - calorias totais por refeição;
+///   - quantidade (g, ml, porções);
+/// - abrir o ecrã de **adicionar alimento** passando:
+///   - refeição (Pequeno-almoço / Almoço / Lanche / Jantar);
+///   - data atual do diário (`dateYmd`);
+/// - abrir o **detalhe do alimento** para editar entradas já existentes;
+/// - remover itens de refeição;
+/// - registar consumo de **água** (UI local / não persistente);
+/// - abrir estatísticas de nutrição (`nutritionStats`) a partir da ação
+///   no rodapé.
+///
+/// Este ecrã consome dados dos repositórios:
+/// - `userRepo` (utilizador atual);
+/// - `goalsRepo` (meta calórica diária);
+/// - `mealsRepo` (refeições + itens por dia).
 class NutritionScreen extends StatefulWidget {
   const NutritionScreen({super.key});
+
   @override
   State<NutritionScreen> createState() => _NutritionScreenState();
 }
 
+/// Estado do [NutritionScreen].
+///
+/// Responsabilidades principais:
+/// - gerir o **deslocamento de dia** [_dayOffset] e direção de animação
+///   dos *slides* (_slideDir);
+/// - carregar refeições do dia selecionado e convertê-las em [MealEntry]
+///   para a UI;
+/// - calcular somas de calorias por refeição e totais diários;
+/// - tratar navegação para:
+///   - ecrã de adicionar alimento (`/add-food`);
+///   - ecrã de detalhe do produto (`productDetail`);
+///   - ecrã de estatísticas (`nutritionStats`).
 class _NutritionScreenState extends State<NutritionScreen> {
-  // ===== Navegação por dia (UI) =====
-  int _dayOffset = 0; // 0=Hoje, -1=Ontem, 1=Amanhã…
+  // ---------------------------------------------------------------------------
+  // Navegação por dia (UI)
+  // ---------------------------------------------------------------------------
+
+  /// Deslocamento em dias relativamente a hoje.
+  ///
+  /// - `0` = hoje;
+  /// - `-1` = ontem;
+  /// - `1` = amanhã;
+  /// - etc.
+  int _dayOffset = 0;
+
+  /// Direção do slide usado nas animações de transição entre dias.
+  ///
+  /// - `1`  → deslizar da direita para a esquerda (futuro);
+  /// - `-1` → deslizar da esquerda para a direita (passado);
+  /// - `0`  → sem deslocamento definido.
   int _slideDir = 0;
 
-  // ===== Estado calorias (resumo topo – UI) =====
+  // ---------------------------------------------------------------------------
+  // Estado calorias (resumo topo – UI)
+  // ---------------------------------------------------------------------------
+
+  /// Meta calórica usada como *fallback* quando o utilizador ainda não tem
+  /// objetivos definidos.
   final int _fallbackDailyGoal = 2200;
+
+  /// Meta calórica efetiva do dia.
+  ///
+  /// Se [_dailyGoal] for maior que 0, usa esse valor. Caso contrário,
+  /// recorre ao [_fallbackDailyGoal].
   int get _goal => _dailyGoal > 0 ? _dailyGoal : _fallbackDailyGoal;
 
+  /// Meta calórica diária vinda do repositório de objetivos do utilizador.
   int _dailyGoal = 0;
 
+  // ---------------------------------------------------------------------------
+  // Conversões entre modelos de domínio e UI
+  // ---------------------------------------------------------------------------
+
+  /// Converte a string de tipo de refeição vinda da DB para [MealType].
+  ///
+  /// Mapeamento esperado:
+  /// - `'BREAKFAST'` → [MealType.breakfast];
+  /// - `'LUNCH'`     → [MealType.lunch];
+  /// - `'SNACK'`     → [MealType.snack];
+  /// - `'DINNER'`    → [MealType.dinner];
+  ///
+  /// Caso receba um valor inesperado, devolve [MealType.lunch] como valor
+  /// por omissão para evitar crashes.
   MealType _parseMealType(String s) {
     switch (s) {
       case 'BREAKFAST':
@@ -40,6 +118,16 @@ class _NutritionScreenState extends State<NutritionScreen> {
     }
   }
 
+  /// Converte uma lista de [MealWithItems] (modelo de domínio) para uma lista
+  /// de [MealEntry] (modelo de UI).
+  ///
+  /// Para cada refeição [MealWithItems]:
+  /// - determina o [MealType] através de [_parseMealType];
+  /// - percorre os itens associados ([MealItem]):
+  ///   - constrói um [MealEntry] com:
+  ///     - identificação (id, nome, barcode, brand, etc.);
+  ///     - calorias e macros;
+  ///     - quantidades (g, ml, porções) de forma amigável.
   List<MealEntry> _toEntries(List<MealWithItems> meals) {
     final out = <MealEntry>[];
     for (final m in meals) {
@@ -68,40 +156,68 @@ class _NutritionScreenState extends State<NutritionScreen> {
     return out;
   }
 
+  // ---------------------------------------------------------------------------
+  // Carregamento de dados para o dia atual (_dayOffset)
+  // ---------------------------------------------------------------------------
+
+  /// Carrega objetivos e refeições para o dia atual (_dayOffset).
+  ///
+  /// Fluxo:
+  /// 1. Dispara um `setState()` leve para forçar rebuild (pode ser usado
+  ///    para mostrar estados de carregamento simples);
+  /// 2. Obtém o utilizador atual em `userRepo.currentUser()`:
+  ///    - se não houver, termina (sem dados para mostrar);
+  /// 3. Lê objetivos em `goalsRepo.getByUser(u.id)` e define [_dailyGoal];
+  /// 4. Calcula a data canónica do dia (`DateTime.now().toUtc()` + offset);
+  /// 5. Pede ao repositório de refeições os dados de `[mealsRepo.getMealsForDay]`;
+  /// 6. Converte a lista de [MealWithItems] para [MealEntry] com [_toEntries];
+  /// 7. Garante que ao terminar (com sucesso ou erro) faz `setState` se o
+  ///    widget ainda estiver montado.
   Future<void> _loadDay() async {
-    setState(() {}); // trigger leve de loading
+    setState(() {}); // trigger leve de loading (rebuild imediato)
     try {
       final u = await di.di.userRepo.currentUser();
       if (u == null) return;
 
-      // Goal diário
+      // Objetivo diário (pode ser 0 se ainda não configurado).
       final goals = await di.di.goalsRepo.getByUser(u.id);
       _dailyGoal = goals?.dailyCalories ?? 0;
 
-      // Refeições do dia
+      // Refeições do dia (em UTC + offset)
       final dayCanon = DateTime.now().toUtc().add(Duration(days: _dayOffset));
       final meals = await di.di.mealsRepo.getMealsForDay(u.id, dayCanon);
       _entries = _toEntries(meals);
     } catch (_) {
-      // opcional: snack/erro
+      // Erros são engolidos; pode-se adicionar SnackBar se for necessário.
     } finally {
       if (mounted) setState(() {});
     }
   }
 
-  // ===== Estado das refeições (UI local) =====
+  // ---------------------------------------------------------------------------
+  // Estado das refeições (UI local)
+  // ---------------------------------------------------------------------------
+
+  /// Lista completa de entradas de refeição do dia, em formato de UI.
   List<MealEntry> _entries = const [];
 
-  // Agrupado por tipo (UI):
+  /// Entradas do **pequeno-almoço**.
   List<MealEntry> get _brk =>
       _entries.where((e) => e.meal == MealType.breakfast).toList();
+
+  /// Entradas do **almoço**.
   List<MealEntry> get _lun =>
       _entries.where((e) => e.meal == MealType.lunch).toList();
+
+  /// Entradas do **lanche**.
   List<MealEntry> get _snk =>
       _entries.where((e) => e.meal == MealType.snack).toList();
+
+  /// Entradas do **jantar**.
   List<MealEntry> get _din =>
       _entries.where((e) => e.meal == MealType.dinner).toList();
 
+  /// Soma das calorias (arredondadas) de todas as [MealEntry] do dia.
   int get _consumed {
     int sum = 0;
     for (final e in _entries) {
@@ -111,6 +227,9 @@ class _NutritionScreenState extends State<NutritionScreen> {
     return sum;
   }
 
+  /// Data atual do diário (offset) em formato ISO `yyyy-MM-dd`.
+  ///
+  /// Usado quando navegamos para `/add-food` como campo `dateYmd`.
   String get _ymd {
     final d = DateTime.now().add(Duration(days: _dayOffset));
     return '${d.year.toString().padLeft(4, '0')}-'
@@ -118,12 +237,22 @@ class _NutritionScreenState extends State<NutritionScreen> {
         '${d.day.toString().padLeft(2, '0')}';
   }
 
+  // ---------------------------------------------------------------------------
+  // Ciclo de vida do State
+  // ---------------------------------------------------------------------------
+
+  /// Inicializa o estado, carregando os dados do dia atual (offset 0).
   @override
   void initState() {
     super.initState();
     _loadDay();
   }
 
+  // ---------------------------------------------------------------------------
+  // Helpers de cálculo e formatação
+  // ---------------------------------------------------------------------------
+
+  /// Soma as calorias (arredondadas) de uma coleção de [MealEntry].
   int _sumKcal(Iterable<MealEntry> xs) {
     int s = 0;
     for (final e in xs) {
@@ -132,14 +261,32 @@ class _NutritionScreenState extends State<NutritionScreen> {
     return s;
   }
 
+  /// Gera um rótulo amigável para o dia, com base no [off] (offset).
+  ///
+  /// Casos especiais:
+  /// - `0`  → "Hoje";
+  /// - `-1` → "Ontem";
+  /// - `1`  → "Amanhã".
+  ///
+  /// Para outros valores, usa `MaterialLocalizations.formatMediumDate`
+  /// para mostrar uma data localizada.
   String _labelFor(BuildContext ctx, int off) {
-    if (off == 0) return "Hoje";
-    if (off == -1) return "Ontem";
-    if (off == 1) return "Amanhã";
+    if (off == 0) return 'Hoje';
+    if (off == -1) return 'Ontem';
+    if (off == 1) return 'Amanhã';
     final d = DateTime.now().add(Duration(days: off));
     return MaterialLocalizations.of(ctx).formatMediumDate(d);
   }
 
+  // ---------------------------------------------------------------------------
+  // Navegação entre dias
+  // ---------------------------------------------------------------------------
+
+  /// Altera o dia atual do diário em [delta] dias.
+  ///
+  /// - Atualiza `_slideDir` para controlar a direção da animação;
+  /// - ajusta `_dayOffset`;
+  /// - re-carrega os dados do dia via [_loadDay].
   void _go(int delta) {
     if (delta == 0) return;
     setState(() {
@@ -149,13 +296,24 @@ class _NutritionScreenState extends State<NutritionScreen> {
     _loadDay();
   }
 
-  // ======= NAV: Adicionar alimento (vai para /add-food) =======
+  // ---------------------------------------------------------------------------
+  // Navegação: adicionar alimento e editar entrada existente
+  // ---------------------------------------------------------------------------
+
+  /// Abre o ecrã de **Adicionar Alimento** (`/add-food`) para a refeição
+  /// indicada em [meal], já com a data do diário atual.
+  ///
+  /// - Passa o enum [MealType] diretamente em `'meal'`;
+  /// - Envia também um título textual `'mealTitle'` com `meal.labelPt`;
+  /// - Inclui `'dateYmd'` no formato `yyyy-MM-dd`.
+  ///
+  /// Ao regressar (`then`), volta a chamar [_loadDay] para atualizar a lista.
   void _openAddFor(MealType meal) {
     context
         .push(
           '/add-food',
           extra: {
-            'meal': meal, // <- envia o enum diretamente
+            'meal': meal, // envia o enum diretamente
             'mealTitle': meal.labelPt, // opcional (UI)
             'dateYmd': _ymd, // YYYY-MM-DD
           },
@@ -163,6 +321,11 @@ class _NutritionScreenState extends State<NutritionScreen> {
         .then((_) => _loadDay());
   }
 
+  /// Remove uma entrada de refeição [MealEntry] através do `mealsRepo`.
+  ///
+  /// - Chama `mealsRepo.removeMealItem(e.id)`;
+  /// - Ignora erros (pode ser acrescentado feedback via SnackBar);
+  /// - No fim, recarrega o dia para refletir a alteração.
   void _removeEntry(MealEntry e) async {
     try {
       await di.di.mealsRepo.removeMealItem(e.id);
@@ -172,14 +335,31 @@ class _NutritionScreenState extends State<NutritionScreen> {
     _loadDay();
   }
 
-  // ======= NAV: Detalhe do produto (vai para productDetail) =======
+  /// Abre o ecrã de **detalhe de produto** para uma entrada existente.
+  ///
+  /// Configura `extra` com:
+  /// - Identificação (`barcode`, `name`, `brand`);
+  /// - `baseQuantityLabel`:
+  ///   - `'100 g'` se a entrada tem `quantityGrams`;
+  ///   - `'100 ml'` se tem `quantityMl`;
+  ///   - `'1 porção'` caso contrário;
+  /// - Valores nutricionais `kcalPerBase` / `proteinGPerBase` / etc.;
+  /// - Flags de edição:
+  ///   - `freezeFromEntry = true` → os dados base são fixos e vêm da entrada;
+  ///   - `readOnly = false` → o utilizador pode editar;
+  ///   - `initialMeal` → refeição em que o item está registado;
+  ///   - `date` → data canónica do dia do diário (UTC + offset);
+  ///   - `existingMealItemId` → id para update;
+  ///   - `initialGrams` → quantidade atual em gramas (quando aplicável).
+  ///
+  /// Ao regressar, volta a chamar [_loadDay] para refletir possíveis edições.
   void _openEntry(MealEntry e) {
-    // Base para a UI do detalhe (apenas o "tamanho" da unidade base)
+    // Base para a UI do detalhe (tamanho da unidade base).
     final String baseQty = (e.quantityGrams != null)
         ? '100 g' // item registado em gramas → base g
         : (e.quantityMl != null)
-        ? '100 ml' // item registado em ml → base ml
-        : '1 porção'; // senão, assume porção/unidade
+            ? '100 ml' // item registado em ml → base ml
+            : '1 porção'; // senão, assume porção/unidade
 
     final dayCanon = DateTime.now().toUtc().add(Duration(days: _dayOffset));
 
@@ -206,14 +386,25 @@ class _NutritionScreenState extends State<NutritionScreen> {
 
             // para UPDATE correto e prefill do multiplicador
             'existingMealItemId': e.id,
-            'initialGrams': e.quantityGrams
-                ?.toDouble(), // usado se base for 'g'
-            // (se quiseres, podes também enviar 'initialMl' / 'initialServings' mais tarde)
+            'initialGrams': e.quantityGrams?.toDouble(),
           },
         )
         .then((_) => _loadDay());
   }
 
+  // ---------------------------------------------------------------------------
+  // Construção do UI principal (Scaffold)
+  // ---------------------------------------------------------------------------
+
+  /// Constrói toda a estrutura visual do Diário:
+  ///
+  /// - `AppBar` com título "Diário das Calorias";
+  /// - botão FAB para adicionar alimento (por omissão, pequeno-almoço);
+  /// - cabeçalho verde com:
+  ///   - navegação entre dias (setas + swipe);
+  ///   - resumo compacto de calorias (meta, consumidas, restantes);
+  /// - conteúdo principal com [_DayContent] para o dia atual;
+  /// - barra inferior com ação para estatísticas de nutrição.
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -226,7 +417,7 @@ class _NutritionScreenState extends State<NutritionScreen> {
         backgroundColor: cs.primary,
         foregroundColor: cs.onPrimary,
         title: Text(
-          "Diário das Calorias",
+          'Diário das Calorias',
           style: tt.headlineSmall?.copyWith(
             fontWeight: FontWeight.w700,
             color: Colors.white,
@@ -242,7 +433,7 @@ class _NutritionScreenState extends State<NutritionScreen> {
       ),
       body: Column(
         children: [
-          // ===== HERO VERDE =====
+          // ===== HERO VERDE (data + resumo de calorias) =====
           Container(
             color: cs.primary,
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
@@ -250,6 +441,7 @@ class _NutritionScreenState extends State<NutritionScreen> {
               bottom: false,
               child: Column(
                 children: [
+                  // Navegação de dia (setas + swipe)
                   GestureDetector(
                     onHorizontalDragEnd: (d) {
                       final v = d.primaryVelocity ?? 0;
@@ -329,7 +521,7 @@ class _NutritionScreenState extends State<NutritionScreen> {
             ),
           ),
 
-          // ===== Conteúdo do dia =====
+          // ===== Conteúdo do dia (refeições + água) =====
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 260),
@@ -377,6 +569,22 @@ class _NutritionScreenState extends State<NutritionScreen> {
 
 /* ============================ MODELOS (UI) ============================ */
 
+/// Modelo de UI para representar uma entrada de refeição (um alimento
+/// registado num determinado dia/meal).
+///
+/// É derivado de `MealItem` + `MealWithItems` do domínio, mas é simplificado
+/// para uso direto na interface.
+///
+/// Campos principais:
+/// - [id]: identificador único da entrada (para remoção/edição);
+/// - [name]: nome do alimento (fallback para customFoodId ou "Alimento");
+/// - [brand]: marca (opcional);
+/// - [barcode]: código de barras (opcional);
+/// - [meal]: refeição a que pertence (enum [MealType]);
+/// - [calories]: calorias do registo atual (já multiplicado pela quantidade);
+/// - [protein], [carbs], [fat]: macros associados ao registo;
+/// - [quantityGrams], [quantityMl], [servings]: quantidades em formatos
+///   alternativos (apenas um deles é normalmente usado).
 class MealEntry {
   final String id;
   final String name;
@@ -409,9 +617,15 @@ class MealEntry {
 
 /* ============================ AUXILIARES ============================ */
 
+/// Botão de seta usado no cabeçalho de navegação entre dias.
+///
+/// Mostra um [IconButton.filled] estilizado:
+/// - fundo baseado em `onPrimary` semi-transparente;
+/// - ícone com a cor `primary`.
 class _ArrowBtn extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
+
   const _ArrowBtn({required this.icon, required this.onTap});
 
   @override
@@ -431,6 +645,13 @@ class _ArrowBtn extends StatelessWidget {
 
 /* ============================ DIA ============================ */
 
+/// Conteúdo principal de um dia do diário.
+///
+/// Este widget recebe listas já agrupadas por refeição e:
+/// - cria secções para cada refeição através de [_MealSection];
+/// - adiciona o cartão de água [_WaterCard];
+/// - aplica comportamento de scroll tipo *bounce* em iOS com
+///   [_BounceScrollBehavior].
 class _DayContent extends StatelessWidget {
   final List<MealEntry> brk, lun, snk, din;
   final int kcalBrk, kcalLun, kcalSnk, kcalDin;
@@ -465,7 +686,7 @@ class _DayContent extends StatelessWidget {
         padding: EdgeInsets.fromLTRB(16, 12, 16, bottom + 16),
         children: [
           _MealSection(
-            title: "Pequeno-almoço",
+            title: 'Pequeno-almoço',
             calories: kcalBrk,
             items: brk,
             onAddTap: () => onTapAddFood(MealType.breakfast),
@@ -475,7 +696,7 @@ class _DayContent extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           _MealSection(
-            title: "Almoço",
+            title: 'Almoço',
             calories: kcalLun,
             items: lun,
             onAddTap: () => onTapAddFood(MealType.lunch),
@@ -485,7 +706,7 @@ class _DayContent extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           _MealSection(
-            title: "Lanche",
+            title: 'Lanche',
             calories: kcalSnk,
             items: snk,
             onAddTap: () => onTapAddFood(MealType.snack),
@@ -495,7 +716,7 @@ class _DayContent extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           _MealSection(
-            title: "Jantar",
+            title: 'Jantar',
             calories: kcalDin,
             items: din,
             onAddTap: () => onTapAddFood(MealType.dinner),
@@ -512,26 +733,39 @@ class _DayContent extends StatelessWidget {
   }
 }
 
+/// Comportamento de scroll com "bounce" e sem *glow* azul.
+///
+/// Usado para dar uma sensação mais semelhante a iOS.
 class _BounceScrollBehavior extends ScrollBehavior {
   const _BounceScrollBehavior();
+
   @override
   ScrollPhysics getScrollPhysics(BuildContext context) =>
       const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics());
+
   @override
   Widget buildOverscrollIndicator(
     BuildContext context,
     Widget child,
     ScrollableDetails details,
   ) {
-    return child; // sem glow
+    return child; // sem glow visual
   }
 }
 
 /* ============================ CALORIE SUMMARY ============================ */
 
+/// Resumo compacto de calorias (meta, consumidas, restantes) ligado à barra
+/// superior do diário.
+///
+/// Mostra três segmentos:
+/// - Meta;
+/// - Consumidas;
+/// - Restantes (com cor de erro quando negativo).
 class _CalorieSummaryConnectedCompact extends StatelessWidget {
   final int goal;
   final int consumed;
+
   const _CalorieSummaryConnectedCompact({
     required this.goal,
     required this.consumed,
@@ -547,6 +781,7 @@ class _CalorieSummaryConnectedCompact extends StatelessWidget {
     final onP = cs.onPrimary;
     final dividerColor = onP.withValues(alpha: .22);
 
+    /// Constrói um segmento (coluna) com rótulo e valor.
     Widget seg({
       required String label,
       required String value,
@@ -559,7 +794,8 @@ class _CalorieSummaryConnectedCompact extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: onP.withValues(alpha: .12),
                   borderRadius: BorderRadius.circular(8),
@@ -616,11 +852,11 @@ class _CalorieSummaryConnectedCompact extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                seg(label: "Meta", value: "$goal kcal"),
-                seg(label: "Consumidas", value: "$consumed kcal"),
+                seg(label: 'Meta', value: '$goal kcal'),
+                seg(label: 'Consumidas', value: '$consumed kcal'),
                 seg(
-                  label: "Restantes",
-                  value: "${remaining.abs()} kcal",
+                  label: 'Restantes',
+                  value: '${remaining.abs()} kcal',
                   valueColor: ok ? onP : cs.error,
                 ),
               ],
@@ -642,11 +878,13 @@ class _CalorieSummaryConnectedCompact extends StatelessWidget {
   }
 }
 
+/// Desenha divisórias verticais entre segmentos do resumo de calorias.
 class _VerticalDividersPainter extends CustomPainter {
   final Color color;
   final int count;
   final double topPad;
   final double bottomPad;
+
   const _VerticalDividersPainter({
     required this.color,
     this.count = 2,
@@ -660,6 +898,7 @@ class _VerticalDividersPainter extends CustomPainter {
       ..color = color
       ..strokeWidth = 1.0
       ..style = PaintingStyle.stroke;
+
     for (var i = 1; i <= count; i++) {
       final x = size.width * i / (count + 1);
       final alignedX = x.floorToDouble() + 0.5;
@@ -681,6 +920,15 @@ class _VerticalDividersPainter extends CustomPainter {
 
 /* ============================ MEAL CARD ============================ */
 
+/// Secção de refeição no diário (Pequeno-almoço, Almoço, etc.).
+///
+/// Contém:
+/// - cabeçalho colorido com:
+///   - título da refeição;
+///   - calorias totais;
+///   - ícone de expandir/recolher;
+/// - corpo com a lista de itens ([MealEntry]) quando expandido;
+/// - *footer* com ação "Adicionar alimento".
 class _MealSection extends StatefulWidget {
   final String title;
   final int calories;
@@ -705,6 +953,7 @@ class _MealSection extends StatefulWidget {
 }
 
 class _MealSectionState extends State<_MealSection> {
+  /// Estado interno de expansão da secção.
   late bool _expanded;
 
   @override
@@ -713,6 +962,8 @@ class _MealSectionState extends State<_MealSection> {
     _expanded = widget.initiallyExpanded;
   }
 
+  /// Mantém a secção automaticamente expandida quando recebe itens pela
+  /// primeira vez (passa de vazia para não vazia).
   @override
   void didUpdateWidget(covariant _MealSection oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -721,6 +972,7 @@ class _MealSectionState extends State<_MealSection> {
     }
   }
 
+  /// Inverte o estado de expansão ao tocar no cabeçalho.
   void _toggle() => setState(() => _expanded = !_expanded);
 
   @override
@@ -775,7 +1027,7 @@ class _MealSectionState extends State<_MealSection> {
                           shape: const StadiumBorder(),
                         ),
                         child: Text(
-                          "${widget.calories} kcal",
+                          '${widget.calories} kcal',
                           style: tt.titleMedium?.copyWith(
                             color: cs.onPrimary,
                             fontWeight: FontWeight.w700,
@@ -817,7 +1069,7 @@ class _MealSectionState extends State<_MealSection> {
               secondChild: const SizedBox.shrink(),
             ),
 
-            // divisor
+            // divisor visual (aparece quando recolhido)
             AnimatedContainer(
               duration: const Duration(milliseconds: 180),
               height: 1,
@@ -834,7 +1086,7 @@ class _MealSectionState extends State<_MealSection> {
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
                     child: Text(
-                      "Adicionar alimento",
+                      'Adicionar alimento',
                       style: tt.titleMedium?.copyWith(
                         color: cs.primary,
                         fontWeight: FontWeight.w700,
@@ -851,11 +1103,26 @@ class _MealSectionState extends State<_MealSection> {
   }
 }
 
+/// Lista de itens de refeição dentro de uma secção.
+///
+/// Mostra:
+/// - mensagem de vazio quando [items] está vazio;
+/// - caso contrário, um conjunto de cartões com:
+///   - nome do alimento;
+///   - marca e barcode (se existirem);
+///   - quantidade (g, ml ou porções);
+///   - badge de calorias;
+///   - ícone para remover.
 class _MealItemsList extends StatelessWidget {
   final List<MealEntry> items;
   final void Function(MealEntry e)? onRemove;
   final void Function(MealEntry e)? onTapItem;
-  const _MealItemsList({required this.items, this.onRemove, this.onTapItem});
+
+  const _MealItemsList({
+    required this.items,
+    this.onRemove,
+    this.onTapItem,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -865,7 +1132,7 @@ class _MealItemsList extends StatelessWidget {
     if (items.isEmpty) {
       return Center(
         child: Text(
-          "Sem itens adicionados.",
+          'Sem itens adicionados.',
           style: tt.bodyMedium?.copyWith(
             color: cs.onSurface.withValues(alpha: .7),
             fontWeight: FontWeight.w600,
@@ -884,7 +1151,7 @@ class _MealItemsList extends StatelessWidget {
         final bc = e.barcode?.trim();
         if (bc != null && bc.isNotEmpty) subtitleParts.add(bc);
 
-        // Quantidade human friendly
+        // Quantidade numa string legível (g, ml, porções).
         String? qtyLabel;
         if (e.quantityGrams != null) {
           qtyLabel = '${e.quantityGrams!.round()} g';
@@ -901,7 +1168,8 @@ class _MealItemsList extends StatelessWidget {
           onTap: () => onTapItem?.call(e),
           child: Container(
             margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surface,
               borderRadius: BorderRadius.circular(12),
@@ -912,20 +1180,25 @@ class _MealItemsList extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // Texto
+                // Texto (nome, subtítulo, quantidade)
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // NOME
+                      // Nome
                       Text(
                         e.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurface,
-                          fontWeight: FontWeight.w800,
-                        ),
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleSmall
+                            ?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurface,
+                              fontWeight: FontWeight.w800,
+                            ),
                       ),
                       if (subtitleParts.isNotEmpty)
                         Padding(
@@ -934,11 +1207,13 @@ class _MealItemsList extends StatelessWidget {
                             subtitleParts.join(' • '),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
                                 ?.copyWith(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
                                 ),
                           ),
                         ),
@@ -947,11 +1222,13 @@ class _MealItemsList extends StatelessWidget {
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
                             qtyLabel,
-                            style: Theme.of(context).textTheme.bodySmall
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
                                 ?.copyWith(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
                                 ),
                           ),
                         ),
@@ -959,7 +1236,7 @@ class _MealItemsList extends StatelessWidget {
                   ),
                 ),
 
-                // badge kcal
+                // Badge kcal
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -970,17 +1247,20 @@ class _MealItemsList extends StatelessWidget {
                     shape: const StadiumBorder(),
                   ),
                   child: Text(
-                    "$kcal kcal",
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: .2,
-                    ),
+                    '$kcal kcal',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: .2,
+                        ),
                   ),
                 ),
                 const SizedBox(width: 8),
 
-                // remover
+                // Botão remover
                 IconButton(
                   tooltip: 'Remover',
                   icon: Icon(
@@ -993,7 +1273,8 @@ class _MealItemsList extends StatelessWidget {
                     minWidth: 40,
                     minHeight: 40,
                   ),
-                  onPressed: (onRemove == null) ? null : () => onRemove!(e),
+                  onPressed:
+                      (onRemove == null) ? null : () => onRemove!(e),
                 ),
                 const SizedBox(width: 6),
               ],
@@ -1007,21 +1288,37 @@ class _MealItemsList extends StatelessWidget {
 
 /* ============================ ÁGUA + AÇÕES ============================ */
 
+/// Card de registo de água diária (UI local).
+///
+/// Nota: neste estado do projeto, o valor é mantido apenas em memória:
+/// - [ml] é reiniciado quando o ecrã é recriado;
+/// - pode ser persistido no futuro (por exemplo, via DB ou shared prefs).
 class _WaterCard extends StatefulWidget {
   const _WaterCard();
+
   @override
   State<_WaterCard> createState() => _WaterCardState();
 }
 
 class _WaterCardState extends State<_WaterCard> {
+  /// Quantidade de água registada no dia (em ml).
   int ml = 0;
+
+  /// Objetivo diário de água (em ml).
   final int goal = 2000;
+
+  /// Estado de expansão/recolha do card.
   bool _expanded = true;
 
+  /// Alterna a expansão do conteúdo.
   void _toggle() => setState(() => _expanded = !_expanded);
+
+  /// Aplica um delta à quantidade de água, mantendo dentro de [0, 40000].
   void _applyDelta(int delta) =>
       setState(() => ml = (ml + delta).clamp(0, 40000));
 
+  /// Abre bottom sheet para inserir quantidade customizada
+  /// (pode ser soma ou subtração).
   Future<void> _openCustomAmountSheet() async {
     final res = await showModalBottomSheet<_CustomAmountResult>(
       context: context,
@@ -1061,6 +1358,7 @@ class _WaterCardState extends State<_WaterCard> {
         borderRadius: BorderRadius.circular(16),
         child: Column(
           children: [
+            // Header do card de água
             Material(
               color: cs.primary,
               child: InkWell(
@@ -1074,7 +1372,7 @@ class _WaterCardState extends State<_WaterCard> {
                     children: [
                       Expanded(
                         child: Text(
-                          "Água",
+                          'Água',
                           style: tt.titleLarge?.copyWith(
                             color: cs.onPrimary,
                             fontWeight: FontWeight.w800,
@@ -1091,7 +1389,7 @@ class _WaterCardState extends State<_WaterCard> {
                           shape: const StadiumBorder(),
                         ),
                         child: Text(
-                          "${ml ~/ 100}dl / ${goal ~/ 100}dl",
+                          '${ml ~/ 100}dl / ${goal ~/ 100}dl',
                           style: tt.titleMedium?.copyWith(
                             color: cs.onPrimary,
                             fontWeight: FontWeight.w700,
@@ -1113,6 +1411,8 @@ class _WaterCardState extends State<_WaterCard> {
                 ),
               ),
             ),
+
+            // Corpo com barra de progresso
             AnimatedCrossFade(
               duration: const Duration(milliseconds: 180),
               crossFadeState: _expanded
@@ -1121,7 +1421,8 @@ class _WaterCardState extends State<_WaterCard> {
               firstChild: Container(
                 width: double.infinity,
                 color: Colors.white,
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                padding:
+                    const EdgeInsets.fromLTRB(16, 14, 16, 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1141,6 +1442,8 @@ class _WaterCardState extends State<_WaterCard> {
               ),
               secondChild: const SizedBox.shrink(),
             ),
+
+            // Ação "Adicionar água"
             Material(
               color: Colors.white,
               child: InkWell(
@@ -1150,9 +1453,10 @@ class _WaterCardState extends State<_WaterCard> {
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
                     child: Text(
-                      "Adicionar água",
+                      'Adicionar água',
                       style: tt.titleMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.primary,
+                        color:
+                            Theme.of(context).colorScheme.primary,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -1167,24 +1471,27 @@ class _WaterCardState extends State<_WaterCard> {
   }
 }
 
+/// Bottom sheet para escolher uma quantidade customizada de água.
 class _CustomAmountSheet extends StatefulWidget {
   const _CustomAmountSheet();
+
   @override
   State<_CustomAmountSheet> createState() => _CustomAmountSheetState();
 }
 
 class _CustomAmountSheetState extends State<_CustomAmountSheet> {
-  final _controller = TextEditingController(text: "250");
-  String _unit = "ml";
+  final _controller = TextEditingController(text: '250');
+  String _unit = 'ml';
   bool _subtract = false;
 
+  /// Converte o valor introduzido + unidade para ml.
   int get _valueMl {
     final raw = int.tryParse(_controller.text.trim()) ?? 0;
     switch (_unit) {
-      case "dl":
+      case 'dl':
         return raw * 100;
-      case "L":
-      case "l":
+      case 'L':
+      case 'l':
         return raw * 1000;
       default:
         return raw;
@@ -1207,10 +1514,11 @@ class _CustomAmountSheetState extends State<_CustomAmountSheet> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            "Adicionar água",
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+            'Adicionar água',
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 16),
           Row(
@@ -1220,8 +1528,8 @@ class _CustomAmountSheetState extends State<_CustomAmountSheet> {
                   controller: _controller,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
-                    labelText: "Quantidade",
-                    hintText: "ex.: 350",
+                    labelText: 'Quantidade',
+                    hintText: 'ex.: 350',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -1231,17 +1539,18 @@ class _CustomAmountSheetState extends State<_CustomAmountSheet> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    border: Border.all(color: Theme.of(context).dividerColor),
+                    border:
+                        Border.all(color: Theme.of(context).dividerColor),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: DropdownButton<String>(
                     value: _unit,
                     items: const [
-                      DropdownMenuItem(value: "ml", child: Text("ml")),
-                      DropdownMenuItem(value: "dl", child: Text("dl")),
-                      DropdownMenuItem(value: "L", child: Text("L")),
+                      DropdownMenuItem(value: 'ml', child: Text('ml')),
+                      DropdownMenuItem(value: 'dl', child: Text('dl')),
+                      DropdownMenuItem(value: 'L', child: Text('L')),
                     ],
-                    onChanged: (v) => setState(() => _unit = v ?? "ml"),
+                    onChanged: (v) => setState(() => _unit = v ?? 'ml'),
                   ),
                 ),
               ),
@@ -1250,8 +1559,8 @@ class _CustomAmountSheetState extends State<_CustomAmountSheet> {
           const SizedBox(height: 12),
           SegmentedButton<bool>(
             segments: const [
-              ButtonSegment(value: false, label: Text("Somar")),
-              ButtonSegment(value: true, label: Text("Subtrair")),
+              ButtonSegment(value: false, label: Text('Somar')),
+              ButtonSegment(value: true, label: Text('Subtrair')),
             ],
             selected: {_subtract},
             onSelectionChanged: (s) => setState(() => _subtract = s.first),
@@ -1264,7 +1573,10 @@ class _CustomAmountSheetState extends State<_CustomAmountSheet> {
             width: double.infinity,
             child: FilledButton(
               onPressed: () => Navigator.of(context).pop(
-                _CustomAmountResult(valueMl: _valueMl, isSubtract: _subtract),
+                _CustomAmountResult(
+                  valueMl: _valueMl,
+                  isSubtract: _subtract,
+                ),
               ),
               style: FilledButton.styleFrom(
                 backgroundColor: cs.primary,
@@ -1272,7 +1584,7 @@ class _CustomAmountSheetState extends State<_CustomAmountSheet> {
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 foregroundColor: Colors.white,
               ),
-              child: const Text("Aplicar"),
+              child: const Text('Aplicar'),
             ),
           ),
         ],
@@ -1281,14 +1593,29 @@ class _CustomAmountSheetState extends State<_CustomAmountSheet> {
   }
 }
 
+/// Resultado devolvido pelo [_CustomAmountSheet].
+///
+/// - [valueMl]: quantidade em ml a aplicar;
+/// - [isSubtract]: se `true`, a quantidade deve ser subtraída; caso contrário,
+///   somada.
 class _CustomAmountResult {
   final int valueMl;
   final bool isSubtract;
-  const _CustomAmountResult({required this.valueMl, required this.isSubtract});
+
+  const _CustomAmountResult({
+    required this.valueMl,
+    required this.isSubtract,
+  });
 }
 
+/// Ações no rodapé do diário.
+///
+/// Atualmente contém apenas um *pill* para abrir a vista de
+/// **estatísticas de nutrição** (`nutritionStats`), mas o layout permite
+/// facilmente adicionar mais ações no futuro.
 class _BottomActions extends StatelessWidget {
   final VoidCallback? onOpenNutrition;
+
   const _BottomActions({this.onOpenNutrition});
 
   @override
@@ -1298,7 +1625,7 @@ class _BottomActions extends StatelessWidget {
         Expanded(
           child: _TonalPill(
             icon: Icons.pie_chart_outline_rounded,
-            label: "Nutrição",
+            label: 'Nutrição',
             onTap: onOpenNutrition,
           ),
         ),
@@ -1307,16 +1634,29 @@ class _BottomActions extends StatelessWidget {
   }
 }
 
+/// Botão em forma de "pill" tonal, usado em ações de rodapé.
+///
+/// Combina:
+/// - ícone;
+/// - texto;
+/// - plano de fundo baseado em `surfaceContainerHighest`
+///   com sombra suave.
 class _TonalPill extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
-  const _TonalPill({required this.icon, required this.label, this.onTap});
+
+  const _TonalPill({
+    required this.icon,
+    required this.label,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
+
     return Container(
       height: 48,
       decoration: BoxDecoration(
@@ -1336,7 +1676,11 @@ class _TonalPill extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 20, color: cs.onSurface.withValues(alpha: .85)),
+            Icon(
+              icon,
+              size: 20,
+              color: cs.onSurface.withValues(alpha: .85),
+            ),
             const SizedBox(width: 8),
             Text(
               label,

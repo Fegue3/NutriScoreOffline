@@ -16,19 +16,47 @@ import 'utils/legacy_hash.dart' as legacy;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart'
     show FlutterSecureStorage;
 
+/// NutriScore — Repositório de Utilizadores (SQLite/Drift)
+///
+/// Gestão de **autenticação e conta local**:
+/// - **Iniciar sessão** com verificação de palavra-passe (PBKDF2);
+/// - **Migração automática** de hashes legados (`salt$sha256(...)`) para PBKDF2,
+///   no primeiro login bem-sucedido;
+/// - **Registar** novo utilizador com hash PBKDF2;
+/// - Obter **utilizador atual** (via [SecureStore]);
+/// - **Terminar sessão** e **apagar conta** (limpeza de dados + segredos).
 class UserRepoSqlite implements UserRepo {
+  /// Base de dados local (Drift/SQLite).
   final NutriDatabase db;
+
+  /// Armazenamento seguro para sessão/segredos.
   final SecureStore secure;
 
+  /// Constrói o repositório de utilizadores.
   UserRepoSqlite(this.db, this.secure);
 
-  // só para um último “deleteAll()” se quiseres varrer segredos
+  /// Acesso direto ao `FlutterSecureStorage` para um **deleteAll()** opcional
+  /// (limpeza de todos os segredos do dispositivo).
   FlutterSecureStorage get _secureStorage => const FlutterSecureStorage();
 
+  /// Normaliza emails: `trim().toLowerCase()`.
   String _norm(String e) => e.trim().toLowerCase();
 
   // ---------------------------------------------------------------------------
+  // AUTENTICAÇÃO
+  // ---------------------------------------------------------------------------
 
+  /// Inicia sessão com [email] e [password].
+  ///
+  /// Fluxo:
+  /// 1) Procura utilizador por `email` (case-insensitive);
+  /// 2) Tenta validar o hash:
+  ///    - Primeiro com **PBKDF2** ([PasswordCodec.verify]);
+  ///    - Se falhar e detetar formato legado (`salt$hash`), valida com
+  ///      [legacy.LegacyHash.verifyPassword]; em caso de sucesso **migra**
+  ///      para PBKDF2 atualizando `passwordHash`;
+  /// 3) Se válido, guarda `userId` no [SecureStore] e devolve [UserModel];
+  /// 4) Caso contrário, devolve `null`.
   @override
   Future<UserModel?> signIn(String email, String password) async {
     final rows = await db
@@ -75,6 +103,12 @@ class UserRepoSqlite implements UserRepo {
     return model;
   }
 
+  /// Cria uma nova conta de utilizador.
+  ///
+  /// - Gera `id` (UUID v4);
+  /// - Faz hash PBKDF2 da [password];
+  /// - Insere em `User` e guarda o `userId` no [SecureStore];
+  /// - Devolve o `userId`.
   @override
   Future<String> signUp(String email, String password, {String? name}) async {
     final id = const Uuid().v4();
@@ -90,6 +124,9 @@ class UserRepoSqlite implements UserRepo {
     return id;
   }
 
+  /// Devolve o **utilizador atual** (se existir sessão persistida).
+  ///
+  /// Lê o `userId` do [SecureStore] e carrega `id/email/name` da tabela `User`.
   @override
   Future<UserModel?> currentUser() async {
     final id = await secure.readCurrentUserId();
@@ -111,6 +148,15 @@ class UserRepoSqlite implements UserRepo {
     );
   }
 
+  /// Apaga **definitivamente** a conta do utilizador atualmente autenticado.
+  ///
+  /// Passos:
+  /// - Obtém `userId` do [SecureStore]; se `null`, não faz nada;
+  /// - Executa `DELETE FROM User WHERE id=?` numa **transação**, com `PRAGMA foreign_keys = ON;`
+  ///   para garantir *cascades* se definidas no schema;
+  /// - Limpa a sessão no [SecureStore];
+  /// - (Opcional) faz `_secureStorage.deleteAll()` para limpar todos os segredos
+  ///   do dispositivo (não obrigatório).
   @override
   Future<void> deleteAccount() async {
     // vai buscar o utilizador atual ao SecureStore (não uses _kCurrentUserKey)
@@ -132,6 +178,7 @@ class UserRepoSqlite implements UserRepo {
     } catch (_) {}
   }
 
+  /// Termina a sessão local (remove `current_user_id` do armazenamento seguro).
   @override
   Future<void> signOut() => secure.clearSession();
 }

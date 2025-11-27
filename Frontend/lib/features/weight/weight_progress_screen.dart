@@ -25,13 +25,14 @@ import '../../core/theme.dart' show AppColors;
 ///       * média semanal (kg/semana)
 ///       * nº de registos no período selecionado
 ///
-/// Requisitos de dados:
-/// - `di.userRepo.currentUser()` para obter o utilizador atual;
-/// - `di.weightRepo.getRange(userId, from, to)` devolve uma lista de objetos
-///    que contêm pelo menos `dayIso` (YYYY-MM-DD) e `kg`.
+/// Intervalos são sempre definidos em **dias de calendário**:
+/// - 30d → últimos 30 dias incluindo hoje;
+/// - 90d → últimos 90 dias incluindo hoje;
+/// - 6m  → últimos 180 dias incluindo hoje;
+/// - 1 ano → últimos 365 dias incluindo hoje.
 ///
-/// O ecrã também permite “pull to refresh” (via refresh no AppBar) e mostra
-/// mensagens de erro básicas quando algo falha.
+/// O ecrã também permite “refresh” manual (ícone no AppBar) e mostra mensagens
+/// de erro simples quando algo falha.
 /// ---------------------------------------------------------------------------
 
 class WeightProgressScreen extends StatefulWidget {
@@ -44,8 +45,9 @@ class WeightProgressScreen extends StatefulWidget {
 /// Intervalos pré-definidos de dias para o histórico do gráfico.
 enum _Range { d30, d90, d180, d365 }
 
+/// Extensão para helpers de cada intervalo.
 extension on _Range {
-  /// Nº de dias que cada intervalo cobre.
+  /// Nº de dias que cada intervalo cobre (em dias de calendário).
   int get days {
     switch (this) {
       case _Range.d30:
@@ -74,29 +76,40 @@ extension on _Range {
   }
 }
 
-/// Ponto de dados de peso na UI.
+/// Ponto de dados de peso na UI (1 ponto por dia vindo do backend).
+///
+/// É uma camada “intermédia” entre os objetos do repositório
+/// (`dayIso` + `kg`) e o `WeightPoint` usado pelo gráfico.
 class _Point {
   final DateTime d;
   final double kg;
+
   _Point(this.d, this.kg);
 }
 
 class _WeightProgressScreenState extends State<WeightProgressScreen> {
+  // Estado de carregamento/erro.
   bool _loading = true;
   String? _error;
+
+  // Intervalo selecionado (30d, 90d, 6m, 1 ano).
   _Range _range = _Range.d90;
 
+  /// Pontos vindos do repositório (idealmente 1 por dia via `dayIso`).
   List<_Point> _points = [];
+
+  /// Limites do intervalo atual (dias de calendário).
   DateTime? _from;
   DateTime? _to;
 
-  // Métricas calculadas
-  double? _latest;
-  double? _start;
-  double? _deltaKg;
-  double? _deltaPct;
-  double? _perWeek;
-  int _count = 0;
+  // ==================== MÉTRICAS RESUMO ====================
+
+  double? _latest;   // último peso do período
+  double? _start;    // primeiro peso do período
+  double? _deltaKg;  // variação em kg
+  double? _deltaPct; // variação em %
+  double? _perWeek;  // variação média semanal (kg/sem)
+  int _count = 0;    // nº de registos no período
 
   @override
   void initState() {
@@ -105,6 +118,11 @@ class _WeightProgressScreenState extends State<WeightProgressScreen> {
   }
 
   /// Carrega os logs de peso do intervalo atual e calcula as métricas de resumo.
+  ///
+  /// Intervalo:
+  /// - `_range.days` é o total de dias no intervalo (ex.: 30);
+  /// - `from = today - (days - 1)` garante que temos exatamente N dias
+  ///   de calendário **incluindo hoje**.
   Future<void> _fetch() async {
     setState(() {
       _loading = true;
@@ -117,16 +135,22 @@ class _WeightProgressScreenState extends State<WeightProgressScreen> {
         throw Exception('Sem sessão local.');
       }
 
-      // Data canónica de hoje em UTC (00:00)
+      // Data canónica de hoje em UTC (00:00).
       final now = DateTime.now().toUtc();
       final today = DateTime.utc(now.year, now.month, now.day);
-      final from = today.subtract(Duration(days: _range.days));
 
+      // Últimos N dias incluindo hoje.
+      // Ex.: 30d -> de (hoje - 29) até hoje.
+      final totalDays = _range.days;
+      final from = today.subtract(Duration(days: totalDays - 1));
+
+      // Backend devolve registos entre [from, today].
       final list = await di.weightRepo.getRange(u.id, from, today);
 
-      // Mapear para pontos da UI e ordenar por data
+      // Mapeia resposta do repositório → `_Point` e ordena por data.
       _points = list
           .map((e) {
+            // `dayIso` já vem em formato YYYY-MM-DD.
             final d = DateTime.parse('${e.dayIso}T00:00:00Z');
             return _Point(d, e.kg);
           })
@@ -143,8 +167,8 @@ class _WeightProgressScreenState extends State<WeightProgressScreen> {
         _deltaKg = _latest! - _start!;
         _deltaPct = _start == 0 ? 0 : (_deltaKg! / _start!) * 100;
 
-        final days = (_to!.difference(_from!).inDays).clamp(1, 99999);
-        _perWeek = _deltaKg! / days * 7;
+        // Média semanal baseada no nº total de dias do intervalo selecionado.
+        _perWeek = _deltaKg! / totalDays * 7;
       } else {
         _latest = _start = _deltaKg = _deltaPct = _perWeek = null;
       }
@@ -160,6 +184,27 @@ class _WeightProgressScreenState extends State<WeightProgressScreen> {
     if (_range == r) return;
     setState(() => _range = r);
     _fetch();
+  }
+
+  /// Constrói a série de pontos passada ao `WeightTrendCard`.
+  ///
+  /// Aqui não fazemos nenhum "downsample por nº de pontos". Limitamo-nos a
+  /// passar **todos** os registos que vieram do repositório dentro dos
+  /// últimos N dias de calendário.
+  ///
+  /// O `WeightTrendCard` depois:
+  /// - garante continuidade dia a dia (preenche dias sem registo),
+  /// - mostra scroll horizontal,
+  /// - e abre focado nos últimos registos.
+  List<WeightPoint> _buildChartSeries() {
+    return _points
+        .map(
+          (p) => WeightPoint(
+            date: p.d,
+            weightKg: p.kg,
+          ),
+        )
+        .toList();
   }
 
   @override
@@ -225,17 +270,18 @@ class _WeightProgressScreenState extends State<WeightProgressScreen> {
               )
             else
               WeightTrendCard(
-                points: _points
-                    .map(
-                      (p) => WeightPoint(
-                        date: p.d,
-                        weightKg: p.kg,
-                      ),
-                    )
-                    .toList(),
+                // Série com todos os registos do intervalo
+                points: _buildChartSeries(),
                 height: 320,
+                // Backend já deve ter no máx. 1 registo por dia.
                 collapseSameDay: false,
+                // Força o gráfico a usar exatamente este intervalo de dias,
+                // mantendo a linha contínua mesmo em dias sem registo.
+                rangeStart: _from,
+                rangeEnd: _to,
+                fitToWidth: true,
               ),
+
             const SizedBox(height: 16),
 
             // ===== Métricas resumidas do período =====
@@ -249,6 +295,7 @@ class _WeightProgressScreenState extends State<WeightProgressScreen> {
               from: _from,
               to: _to,
             ),
+
             const SizedBox(height: 16),
 
             // Dica de interação com o gráfico
@@ -271,10 +318,11 @@ class _WeightProgressScreenState extends State<WeightProgressScreen> {
 // WIDGETS AUXILIARES
 // ============================================================================
 
-/// Chips de seleção do intervalo de dias.
+/// Chips de seleção do intervalo de dias (30d / 90d / 6m / 1 ano).
 class _RangeChips extends StatelessWidget {
   final _Range value;
   final ValueChanged<_Range> onChanged;
+
   const _RangeChips({required this.value, required this.onChanged});
 
   @override
@@ -308,7 +356,7 @@ class _RangeChips extends StatelessWidget {
 }
 
 /// Card alternativo de gráfico (não usado diretamente, mas mantido como
-/// exemplo isolado de fl_chart com linha).
+/// exemplo isolado de `fl_chart` com linha simples).
 class _ChartCard extends StatelessWidget {
   final bool loading;
   final String? error;
@@ -370,8 +418,8 @@ class _ChartCard extends StatelessWidget {
 
 /// Implementação pura de `fl_chart` para uma linha de tendência de peso.
 ///
-/// (Atualmente não usada diretamente porque a app usa `WeightTrendCard`, mas
-/// pode servir de fallback ou exemplo futuro.)
+/// (Atualmente não usada diretamente porque a app usa `WeightTrendCard`,
+/// mas pode servir de fallback ou exemplo futuro.)
 class _LineChart extends StatelessWidget {
   final List<_Point> points;
   const _LineChart({required this.points});
@@ -523,6 +571,7 @@ class _StatsGrid extends StatelessWidget {
     required this.to,
   });
 
+  /// Cor usada para a variação em kg (verde se houver mudança relevante).
   Color _deltaColor() {
     if (deltaKg == null) return AppColors.coolGray;
     // Não assumimos objetivo (perder/ganhar); só destacamos em verde
@@ -530,6 +579,7 @@ class _StatsGrid extends StatelessWidget {
     return (deltaKg!.abs() > 0.1) ? AppColors.freshGreen : AppColors.coolGray;
   }
 
+  /// Ícone de tendência com base na variação de peso.
   IconData _trendIcon() {
     if (deltaKg == null) return Icons.remove_rounded;
     if (deltaKg! > 0) return Icons.trending_up_rounded;
@@ -537,6 +587,7 @@ class _StatsGrid extends StatelessWidget {
     return Icons.remove_rounded;
   }
 
+  /// Helper para formatar valores numéricos com sufixo.
   String _fmt(double? v, {int dec = 1, String suffix = ''}) {
     if (v == null) return '—';
     return '${v.toStringAsFixed(dec)}$suffix';
@@ -557,8 +608,10 @@ class _StatsGrid extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
               'Período: $rangeStr',
-              style:
-                  const TextStyle(fontSize: 12, color: Color(0xFF666666)),
+              style: const TextStyle(
+                fontSize: 12,
+                color: Color(0xFF666666),
+              ),
             ),
           ),
         Row(
@@ -656,7 +709,7 @@ class _MetricCard extends StatelessWidget {
                 children: [
                   const Text(
                     ' ',
-                    style: TextStyle(fontSize: 0), // spacing fix mínimo
+                    style: TextStyle(fontSize: 0), // pequeno spacing hack
                   ),
                   Text(
                     title,
